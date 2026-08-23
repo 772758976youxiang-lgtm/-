@@ -1,5 +1,7 @@
 # @deepseek-ai/dsh-channel-im —— DSH 外部功能一站式插件
 
+> 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
+
 **harness 本体之外的所有扩展，一个插件全包（v0.2）：**
 
 | 模块 | 说明 |
