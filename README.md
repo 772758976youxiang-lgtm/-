@@ -14,6 +14,8 @@
 
 ## 安装（新机器一行）
 
+> 完整说明见 **`INSTALL.md`**：注册机制（profile/bundle/patch）、3 种安装方式、**12 个坑的排查表**、安装后自检清单。
+
 ```bash
 dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm/-.git
 ```
