@@ -43,16 +43,19 @@ try {
 
   // 3) 连接页/外部打开补丁（目标=同 profile node_modules 下的官方包）
   const runPatch = (script, target) => spawnSync(process.execPath, [path.join(PKG, "client", script), target], { stdio: "inherit" }).status === 0;
-  const settle = path.join(PKG, "node_modules", "@deepseek-ai");
-  const settingsBundle = path.join(settle, "dsh-client-ui-settings-general", "lib", "client.js");
-  const convBundle = path.join(settle, "dsh-client-ui-conversation", "lib", "client.js");
-  // 兼容 pnpm 布局：插件装在 node_modules/@deepseek-ai/ 下时，兄弟包同层
-  const alt = path.resolve(PKG, "..");
-  const settingsAlt = path.join(alt, "dsh-client-ui-settings-general", "lib", "client.js");
-  const convAlt = path.join(alt, "dsh-client-ui-conversation", "lib", "client.js");
-  const target = (a, b) => fs.existsSync(a) ? a : (fs.existsSync(b) ? b : null);
-  const st = target(settingsBundle, settingsAlt);
-  const cv = target(convBundle, convAlt);
+  // 多位置探测：插件同级 / 全局 npm root -g / 常见 profile 位置 —— 宁多不漏
+  const candidates = [];
+  const pushCand = (...dirs) => { for (const d of dirs) if (d) candidates.push(d); };
+  pushCand(path.join(PKG, "node_modules", "@deepseek-ai"), path.resolve(PKG, ".."), path.resolve(PKG, "..", ".."));
+  try {
+    const gr = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["root", "-g"], { encoding: "utf8" });
+    if (gr.status === 0) pushCand(path.join(String(gr.stdout).trim(), "@deepseek-ai"));
+  } catch {}
+  pushCand(path.join(HOME, ".dsh", "profiles", "web", "node_modules", "@deepseek-ai"),
+           path.join(HOME, ".dsh", "profiles", "headless", "node_modules", "@deepseek-ai"));
+  const findBundle = (pkg) => { for (const c of candidates) { const f = path.join(c, pkg, "lib", "client.js"); if (fs.existsSync(f)) return f; } return null; };
+  const st = findBundle("dsh-client-ui-settings-general");
+  const cv = findBundle("dsh-client-ui-conversation");
   if (st) { runPatch("patch-settings.mjs", st) ? done.push("「连接」页注入") : warn.push("「连接」页注入失败（见输出）"); }
   else warn.push("未找到 DSH 设置包：源码构建版暂无「连接」页（原生 client 插件后续实现）");
   if (cv) { runPatch("patch-conversation.mjs", cv) ? done.push("「外部打开」注入") : warn.push("「外部打开」注入失败（见输出）"); }
