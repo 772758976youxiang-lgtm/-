@@ -26,6 +26,12 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 - bundle 层自动托管：桥接随宿主启停；
 - git clone 本地开发：`dsh plugin --profile web install /path/to/this`
 
+## 官方功能对齐（overrides）
+
+本插件内置 7 个包的**编译产物覆盖**（来自私人仓库 `3ef702b` 提交，共 43 文件的功能改造）：
+**峰谷计价 / 周末全天谷价 / token 成本估算 / 账户余额 / “燃烧 token”提示 / 文件查看 / 相关中文文案**。
+安装时 postinstall 自动覆盖到官方 npm 包上 → **官方 harness + 本插件 = 完整（含这些功能改造）**，无需从源码构建。
+
 ## 凭证自理（设计约定）
 
 API Key / 通道 AppKey·Secret / 数字人登录态 **一律不入包**；新设备按《harness-说明书.md》4 项引导自配。

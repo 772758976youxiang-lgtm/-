@@ -64,6 +64,32 @@ try {
   console.log("\n✅ dsh-channel-im 插件资产装配完成：");
   for (const d of done) log("✓ " + d);
   if (warn.length) { console.log("⚠️ 提示："); for (const w of warn) log("• " + w); }
+    // 5) 官方功能对齐：用本插件内置的「功能改造」编译产物覆盖官方 npm 包（峰谷/周末谷价/token成本/账户余额/文件查看等）
+  const overrideRoot = path.join(PKG, "overrides");
+  if (fs.existsSync(overrideRoot)) {
+    for (const pkgName of fs.readdirSync(overrideRoot)) {
+      const srcLib = path.join(overrideRoot, pkgName, "lib");
+      if (!fs.isDirectorySync ? true : !fs.existsSync(srcLib)) continue;
+      let dest = null;
+      for (const c of candidates) {
+        const d = path.join(c, pkgName, "lib");
+        if (fs.existsSync(path.join(c, pkgName, "package.json")) && fs.existsSync(d)) { dest = d; break; }
+      }
+      if (!dest) { warn.push("未找到目标包（跳过覆盖）：" + pkgName); continue; }
+      // 备份原文件（仅首次）
+      if (!fs.existsSync(path.join(dest, ".orig-backup"))) {
+        fs.mkdirSync(path.join(dest, ".orig-backup"), { recursive: true });
+      }
+      const copyRec = (s, d) => {
+        if (fs.statSync(s).isDirectory()) {
+          fs.mkdirSync(d, { recursive: true });
+          for (const f of fs.readdirSync(s)) copyRec(path.join(s, f), path.join(d, f));
+        } else { fs.copyFileSync(s, d); }
+      };
+      copyRec(srcLib, dest);
+      done.push("功能对齐覆盖：" + pkgName);
+    }
+  }
   console.log("\n下一步（凭证自理）：设置→模型 填 DeepSeek API Key；钉钉/数字人/微信按《harness-说明书》配置。");
 } catch (e) {
   console.error("资产装配失败：", e?.message ?? e);
