@@ -43,7 +43,7 @@ DSH_CHANNEL_IM_TARGET_ROOTS=/path/to/deepseek-harness/node_modules/@deepseek-ai 
 | 1 | **pnpm 未安装** | `dsh plugin` 安装命令报 pnpm 错误 | `npm i -g pnpm`；或直接手动：`cd ~/.dsh/profiles/web && pnpm add <包>` |
 | 2 | **源码构建版/自定义布局** | postinstall 提示找不到 7 个目标包 | 设置 `DSH_CHANNEL_IM_TARGET_ROOTS` 指向该构建的 `node_modules/@deepseek-ai`；安装器仍会强制核对包名与 DSH 版本 |
 | 3 | **postinstall 被 pnpm 阻止** | `ERR_PNPM_IGNORED_BUILDS`，技能/预设没装 | `cd ~/.dsh/profiles/web && pnpm approve-builds`，批准本插件后重新安装；仍失败再手动运行 `node node_modules/@deepseek-ai/dsh-channel-im/scripts/install-assets.mjs` |
-| 3a | **pnpm link store** | 插件包存在余额/峰谷代码，但 Web 不显示 | v0.2.2 已自动扫描 pnpm `store/v*/links` 并校验 7 个目标包；运行 `npm run verify:install` 复核。自定义布局可设置 `DSH_CHANNEL_IM_TARGET_ROOTS=<node_modules/@deepseek-ai>` |
+| 3a | **pnpm link store** | 插件包存在余额/峰谷代码，但 Web 不显示 | v0.2.3 已自动扫描 pnpm `store/v*/links` 并校验 7 个目标包；运行 `npm run verify:install` 复核。自定义布局可设置 `DSH_CHANNEL_IM_TARGET_ROOTS=<node_modules/@deepseek-ai>` |
 | 4 | **凭证未配** | 能启动但对话不通（模型 key 未填）/ 连接页空（无通道配置） | 按“凭证自理 4 项”：模型 Key（设置→模型）、钉钉机器人凭证/数字人扫码、微信小号+hook（Windows） |
 | 5 | **端口冲突** | 桥接管理API 5175 被占用 | 改 bundle 行 `managementPort`（`~/.dsh/profiles/web/cordis.patch.yml` 可覆盖），或停掉占进程 |
 | 6 | **3080 被旧进程占用** | 新宿主起不来/页面是旧版 | 停旧 `dsh web` 进程再启 |

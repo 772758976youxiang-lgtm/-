@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-channel-im",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "DSH 外部功能一站式插件：IM 通道桥接（钉钉/企微/微信群聊）+ 数字人扫码 + 「连接」页/「外部打开」 + 技能×2 + 「机器人助手」预设 + Windows 微信网关与接入文档。harness 本体之外的所有扩展，一个插件全包。",
   "type": "module",
   "exports": {

@@ -49,8 +49,35 @@ for (const packageName of [
 ]) {
   assert.equal(fs.statSync(path.join(root, "overrides", packageName, "lib")).isDirectory(), true);
 }
-assert.match(read("overrides/dsh-client-ui-conversation/lib/client.js"), /"context\.balance": "账户余额"/);
-assert.match(read("overrides/dsh-client-ui-conversation/lib/client.js"), /"stats\.peak": "峰"/);
+const conversationClient = read("overrides/dsh-client-ui-conversation/lib/client.js");
+assert.match(conversationClient, /"context\.balance": "账户余额"/);
+assert.match(conversationClient, /"stats\.peak": "峰"/);
+assert.match(conversationClient, /t\("stats\.burningTokens"\)/);
+assert.doesNotMatch(conversationClient, /你的 Harness 正在疯狂燃烧token/);
+
+const dictionaryKeys = (source, startMarker, endMarker) => {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  assert.notEqual(start, -1, `missing dictionary marker: ${startMarker}`);
+  assert.notEqual(end, -1, `missing dictionary marker: ${endMarker}`);
+  return [...source.slice(start, end).matchAll(/^\s*"([^"]+)":/gm)].map((match) => match[1]).sort();
+};
+const zhKeys = dictionaryKeys(conversationClient, "const zh = {", "/** English dictionary");
+const enKeys = dictionaryKeys(conversationClient, "const en = {", "//#endregion");
+assert.deepEqual(enKeys, zhKeys, "English and Chinese locale dictionaries must have identical keys");
+
+const localeTypes = read("overrides/dsh-client-ui-conversation/lib/types/client/locales.d.ts");
+const declarationKeys = (source, startMarker, endMarker = undefined) => {
+  const start = source.indexOf(startMarker);
+  const end = endMarker === undefined ? source.length : source.indexOf(endMarker, start);
+  assert.notEqual(start, -1, `missing declaration marker: ${startMarker}`);
+  if (endMarker !== undefined) assert.notEqual(end, -1, `missing declaration marker: ${endMarker}`);
+  return [...source.slice(start, end).matchAll(/^\s*'([^']+)':/gm)].map((match) => match[1]).sort();
+};
+const zhTypeKeys = declarationKeys(localeTypes, "export declare const zh:", "/** The conversation namespace");
+const enTypeKeys = declarationKeys(localeTypes, "export declare const en:");
+assert.deepEqual(zhTypeKeys, zhKeys, "Chinese locale declaration must match the runtime dictionary");
+assert.deepEqual(enTypeKeys, enKeys, "English locale declaration must match the runtime dictionary");
 assert.match(read("overrides/dsh-host-apiproxy/lib/index.js"), /"host\.balance"/);
 for (const removed of [
   "client/connection.compiled.js",
