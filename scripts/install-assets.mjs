@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { copyDirectoryWithBackup, discoverPackageDirs } from "./install-utils.mjs";
+import { copyDirectoryWithBackup, discoverPackageDirs, installRuntimeLaunchers } from "./install-utils.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PKG = path.resolve(HERE, "..");
@@ -15,6 +15,10 @@ const log = (message) => console.log(`  ${message}`);
 const allowPartial = process.env.DSH_CHANNEL_IM_ALLOW_PARTIAL_INSTALL === "1";
 
 try {
+  const runtimeDir = path.join(HOME, ".dsh-channel-im");
+  const launchers = installRuntimeLaunchers(PKG, runtimeDir);
+  done.push(`稳定启动入口 ${runtimeDir}（${launchers.join("、")}）`);
+
   for (const [srcName, dstName] of [["im-channel-setup.md", "im-channel-setup.md"], ["harness-docs-update.md", "harness-docs.md"]]) {
     const source = path.join(PKG, "skills", srcName);
     if (!fs.existsSync(source)) throw new Error(`缺少技能文件：${source}`);

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { copyDirectoryWithBackup, discoverPackageDirs, verifyDirectory } from "./install-utils.mjs";
+import { copyDirectoryWithBackup, discoverPackageDirs, installRuntimeLaunchers, verifyDirectory } from "./install-utils.mjs";
 
 const makePackage = (directory, name, version = "0.1.1-rc.2") => {
   fs.mkdirSync(path.join(directory, "lib"), { recursive: true });
@@ -46,4 +46,19 @@ test("copies overrides, preserves the first original and verifies output", (t) =
   fs.writeFileSync(path.join(source, "index.js"), "newer");
   copyDirectoryWithBackup(source, destination, backup);
   assert.equal(fs.readFileSync(path.join(backup, "index.js"), "utf8"), "old");
+});
+
+test("installs stable auth and server launchers", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-channel-im-runtime-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const packageRoot = path.join(root, "package");
+  const destination = path.join(root, ".dsh-channel-im");
+  fs.mkdirSync(packageRoot, { recursive: true });
+  fs.writeFileSync(path.join(packageRoot, "auth.mjs"), "console.log('auth')\n");
+  fs.writeFileSync(path.join(packageRoot, "server.mjs"), "console.log('server')\n");
+
+  assert.deepEqual(installRuntimeLaunchers(packageRoot, destination), ["auth.mjs", "server.mjs", "package-root.txt"]);
+  assert.equal(fs.readFileSync(path.join(destination, "auth.mjs"), "utf8"), "console.log('auth')\n");
+  assert.match(fs.readFileSync(path.join(destination, "server.mjs"), "utf8"), /server\.mjs/);
+  assert.equal(fs.readFileSync(path.join(destination, "package-root.txt"), "utf8").trim(), packageRoot);
 });

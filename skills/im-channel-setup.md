@@ -7,14 +7,15 @@ description: 接入钉钉通道 — 用户说“接钉钉机器人/接入机器�
 
 ## 关键位置（确切路径，直接用，禁止搜索）
 
-- **桥接服务**：`~/.dsh-channel-im/server.mjs`（规范安装位；启动：`cd ~/.dsh-channel-im && node server.mjs`）
-- **扫码登录**：`~/.dsh-channel-im/auth.mjs`（`node ~/.dsh-channel-im/auth.mjs login`；`/Users/Admin/DeepSeek/dsh-channel-im/` 是源码目录，勿当运行位）
+- **桥接服务**：`~/.dsh-channel-im/server.mjs`（插件安装时生成的稳定启动入口；启动：`node ~/.dsh-channel-im/server.mjs`）
+- **扫码登录**：`~/.dsh-channel-im/auth.mjs`（插件安装时复制到稳定位置；Windows PowerShell：`node "$env:USERPROFILE\.dsh-channel-im\auth.mjs" login`；macOS/Linux：`node ~/.dsh-channel-im/auth.mjs login`）
+- **实际插件根目录**：记录在 `~/.dsh-channel-im/package-root.txt`；不要假定源码仓库或 profile 的绝对路径。
 - **通道配置文件**：`~/.dsh-im-channels.json`（唯一事实源；创建/删除/查询优先走下面 API）
 - **管理 API**：`http://127.0.0.1:5175`（`GET /api/channels` 查全部通道+id；`POST` 增；`DELETE /api/channels/<id>` 删）
 - **桥接状态**：`~/.dsh-im-channels-status.json`（只读，不要手工改）
 - **注销登录**：`dws auth logout`
 
-⚠️ **铁律：本段路径是唯一的**——查/增/删一律走 API；**禁止**用 `glob`/`ls`/`grep`/`find`/全文搜索去找 auth.mjs、server.mjs 或通道文件（慢、易因 Library 权限报错、纯属浪费时间）。找不到=先跑 `install.sh` 安装后再用本文路径。
+⚠️ **铁律：本段稳定路径由插件 postinstall 创建**——查/增/删一律走 API；不要全文搜索源码。若稳定入口缺失，重新执行 `dsh plugin --profile web install <插件地址>`，不要寻找不存在的 `install.sh` 或硬编码源码目录。
 
 用户说“接钉钉机器人/接入机器人/接真人助手”等时：
 
@@ -30,7 +31,7 @@ description: 接入钉钉通道 — 用户说“接钉钉机器人/接入机器�
 - **多真人 = 多账号多通道**：每个账号一个独立通道（id=`dingtalk-person-<账号尾号>`、name=`钉钉-<userName>-数字人`、profile=`corp:user`），多账号可同时在线。
 - ⚠️ 前提：每个账号须在组织“CLI 授权人员名单”内（公司策略决定可开几个）。
 - 流程：
-  1. `node ~/.dsh-channel-im/auth.mjs login` → 拿 **授权URL+授权码** → 直接发用户（手机钉钉打开并登录该账号）；
+  1. Windows PowerShell 执行 `node "$env:USERPROFILE\.dsh-channel-im\auth.mjs" login`，macOS/Linux 执行 `node ~/.dsh-channel-im/auth.mjs login` → 拿 **授权URL+授权码** → 直接发用户（手机钉钉打开并登录该账号）；
   2. 日志出现 `✅ 扫码登录成功：… (corp:user)` → **auth.mjs 已自动注册通道**（无需再问）；
   3. 回复“已接入 ✅”。
 - **等待扫码期间：若用户不扫/取消/超时未完成 —— 立即终止登录进程**：

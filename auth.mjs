@@ -4,10 +4,14 @@
 //   node auth.mjs status    -> 打印当前已登录账号（profile）列表
 //   node auth.mjs --profile <corp:user>   （可选，配合 login 指定授权目标组织）
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const DWS_BIN = process.env.DWS_BIN || path.join(os.homedir(), ".local", "bin", "dws");
+const DWS_BIN = process.env.DWS_BIN || [
+  path.join(os.homedir(), ".local", "bin", process.platform === "win32" ? "dws.exe" : "dws"),
+  process.platform === "win32" ? "dws.exe" : "dws",
+].find((candidate) => !path.isAbsolute(candidate) || fs.existsSync(candidate));
 const NOW = () => new Date().toISOString().slice(11, 19);
 
 function run(args, timeoutMs = 20000) {

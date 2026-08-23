@@ -40,3 +40,4 @@ Hook 的 `/QueryDB/status` 在本机返回 `IsLogin=0`，但 Hook 实发和数�
 - 浏览器 `设置 → 连接` 出现唯一可用的 `role=switch` 控件，初始 `aria-checked=false`，并展示“先关闭旧微信进程，再启动新的扫码窗口”的说明；
 - 健康状态探测采用 12 秒上限、3 秒缓存和并发单飞；Python 管理 API 忽略客户端提前断开，避免轮询产生异常堆栈。
 - 真实故障回归：`wechatauto-replica` 返回 `type="文本"` 时会归一化为 `text` 并进入 AgentAdapter，不再记为 `unsupported_message`。
+- 安装回归：postinstall 会创建 `~/.dsh-channel-im/auth.mjs`、`server.mjs` 与 `package-root.txt`，Windows 真人扫码入口可直接定位 `~/.local/bin/dws.exe`。

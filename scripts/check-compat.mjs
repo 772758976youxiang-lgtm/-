@@ -52,7 +52,12 @@ assert.doesNotMatch(server, /\{\s*\.\.\.c,\s*status:/);
 const installer = read("scripts/install-assets.mjs");
 assert.match(installer, /discoverPackageDirs/);
 assert.match(installer, /copyDirectoryWithBackup/);
+assert.match(installer, /installRuntimeLaunchers/);
 assert.doesNotMatch(installer, /fs\.isDirectorySync/);
+
+const auth = read("auth.mjs");
+assert.match(auth, /dws\.exe/);
+assert.match(read("skills/im-channel-setup.md"), /package-root\.txt/);
 
 for (const packageName of [
   "dsh-api-remotes",
