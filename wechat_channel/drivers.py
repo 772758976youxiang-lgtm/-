@@ -25,6 +25,15 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def normalize_message_type(value: Any) -> str:
+    """Normalize the localized labels returned by different wechatauto builds."""
+    raw = str(value or "unknown").strip()
+    normalized = raw.lower()
+    if normalized in ("1", "text", "文本", "文字", "文字消息"):
+        return "text"
+    return normalized or "unknown"
+
+
 class ReceiveDriver(ABC):
     @abstractmethod
     def health(self) -> DriverHealth:
@@ -140,7 +149,7 @@ class WeChatDbReceiveDriver(ReceiveDriver):
                     conversation_id=conversation_id,
                     local_id=local_id,
                     sender_id=row.get("sender_id"),
-                    message_type=str(row.get("type") or row.get("local_type") or "unknown"),
+                    message_type=normalize_message_type(row.get("type") or row.get("local_type") or "unknown"),
                     content=str(row.get("content") or ""),
                     timestamp=int(row.get("create_time") or 0),
                     sort_seq=sort_seq,

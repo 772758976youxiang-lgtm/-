@@ -192,7 +192,7 @@ class WeChatChannelService:
         if self.store.is_processed(message.message_id):
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
             return
-        if message.message_type.lower() not in ("text", "1") or not message.content.strip():
+        if message.message_type.lower() not in ("text", "1", "文本", "文字", "文字消息") or not message.content.strip():
             self.store.mark_processed(message.message_id, message.conversation_id, message.to_dict())
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
             self.log("debug", "unsupported_message", "ignored non-text or empty message", {"message_id": message.message_id, "message_type": message.message_type})

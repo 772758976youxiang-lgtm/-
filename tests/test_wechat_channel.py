@@ -84,7 +84,7 @@ class WeChatChannelTests(unittest.TestCase):
         service.poll_once()
         self.assertEqual(self.store.get_cursor("friend"), 10)
         self.assertEqual(service._send_queue.qsize(), 0)
-        db.messages["friend"].append({"local_id": 11, "sender_id": 1, "type": "text", "content": "new", "create_time": 2, "sort_seq": 11})
+        db.messages["friend"].append({"local_id": 11, "sender_id": 1, "type": "文本", "content": "new", "create_time": 2, "sort_seq": 11})
         service.poll_once()
         self.assertEqual(service._send_queue.qsize(), 1)
         task = service._send_queue.get_nowait()

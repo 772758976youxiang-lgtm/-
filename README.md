@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.3）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.4）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -31,7 +31,7 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 
 源码直接运行 `server.mjs` 前先执行 `npm install --ignore-scripts`；`--ignore-scripts` 可避免开发依赖安装阶段重复应用运行包 overrides。
 
-v0.3.3 在「设置 → 连接」增加微信个人号开关。开启后先停止旧通道并关闭现有 `Weixin.exe/WeChat.exe` 进程树，再拉起新的 Windows 微信 4.x 登录窗口；扫码或手机确认后自动建立 `wechat_pc` 通道。关闭开关只停止通道，保留微信客户端与本地状态。安装器继续对齐 DSH `0.1.1-rc.2` 与 pnpm 11，并强制校验 overrides 与中英文字典。
+v0.3.4 在「设置 → 连接」增加微信个人号开关。开启后先停止旧通道并关闭现有 `Weixin.exe/WeChat.exe` 进程树，再拉起新的 Windows 微信 4.x 登录窗口；扫码或手机确认后自动建立 `wechat_pc` 通道。微信数据库返回的 `文本/text/1` 等消息类型会统一归一化，确保中文标签的消息进入 Harness。关闭开关只停止通道，保留微信客户端与本地状态。
 
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
