@@ -3,3 +3,8 @@
   name: '@deepseek-ai/dsh-channel-im'
   config:
     managementPort: 5175
+
+# 浏览器半：注册「连接」设置页（同一包的 dsh.client 面）
+- insert:
+    - id: im-channel-ui
+      name: '@deepseek-ai/dsh-channel-im'
