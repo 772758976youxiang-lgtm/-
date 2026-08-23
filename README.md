@@ -2,13 +2,13 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.0）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.3）：**
 
 | 模块 | 说明 |
 |---|---|
 | 桥接 `server.mjs` | 钉钉机器人(stream)/数字人(dws)/企微预留：随宿主启停、崩溃自重启、管理API 5175、热加载、看门狗、工作区自愈、防互聊/防自环 |
 | 扫码 `auth.mjs` | 钉钉数字人设备流登录，成功自动注册通道（120s 超时） |
-| 「连接」页 | **原生 client 插件**（同包 dsh.client 面，注册 settings.section；经 5175 读状态，任何构建形态都生效） |
+| 「连接」页 | **原生 client 插件**（同包 dsh.client 面；微信个人号开关可自动拉起扫码窗口并建立通道） |
 | 「外部打开」 | 会话详情按钮（官方 npm 版经注入生效；原生槽位插件化在后续版本） |
 | 技能 ×2 | `im-channel-setup`（通道自助接入）+ `harness-docs`（说明书自动维护） |
 | 预设 | 「机器人助手」（无命令/无联网/数字员工人格） |
@@ -31,9 +31,11 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 
 源码直接运行 `server.mjs` 前先执行 `npm install --ignore-scripts`；`--ignore-scripts` 可避免开发依赖安装阶段重复应用运行包 overrides。
 
-v0.3.0 新增正式 Windows 微信个人号通道。安装器继续对齐 DSH `0.1.1-rc.2` 与 pnpm 11，并强制校验 overrides 与中英文字典。
+v0.3.3 在「设置 → 连接」增加微信个人号开关。开启后先停止旧通道并关闭现有 `Weixin.exe/WeChat.exe` 进程树，再拉起新的 Windows 微信 4.x 登录窗口；扫码或手机确认后自动建立 `wechat_pc` 通道。关闭开关只停止通道，保留微信客户端与本地状态。安装器继续对齐 DSH `0.1.1-rc.2` 与 pnpm 11，并强制校验 overrides 与中英文字典。
 
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
+
+微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。控制接口为 `GET /api/wechat/status` 与 `POST /api/wechat/toggle`。
 
 ## 官方功能对齐（overrides）
 

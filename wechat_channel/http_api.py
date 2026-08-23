@@ -40,13 +40,16 @@ class ManagementServer:
 
             def _json(self, code: int, body: Dict[str, Any]) -> None:
                 data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-                self.send_response(code)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
-                for name, value in self._origin_headers().items():
-                    self.send_header(name, value)
-                self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.send_response(code)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(data)))
+                    for name, value in self._origin_headers().items():
+                        self.send_header(name, value)
+                    self.end_headers()
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    return
 
             def _body(self) -> Dict[str, Any]:
                 length = int(self.headers.get("Content-Length") or 0)

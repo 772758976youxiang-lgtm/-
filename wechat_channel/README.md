@@ -41,6 +41,8 @@ Hook 的公开实现默认监听 `0.0.0.0:30001`。应通过 Windows 防火墙�
 python -m wechat_channel run --config "$env:USERPROFILE\.dsh-wechat-channel.json"
 ```
 
+安装为 DSH 插件后，也可直接进入「设置 → 连接」打开“微信个人号”开关。插件会先关闭现有 `Weixin.exe/WeChat.exe` 进程树，再启动新的可见登录窗口，等待扫码或手机确认，并在数据库可读后把状态切换为“已连接”。关闭开关只停止自动收发服务，不会退出微信或删除 SQLite 状态。
+
 也可以让插件宿主管理进程。在 `~/.dsh-im-channels.json` 添加：
 
 ```json
@@ -112,4 +114,3 @@ python -m unittest discover -s tests -p "test_wechat_channel*.py"
 ```
 
 测试覆盖首次基线、增量消息、自发消息过滤、会话与任务持久化、发送降级、回环地址限制和管理 API。
-

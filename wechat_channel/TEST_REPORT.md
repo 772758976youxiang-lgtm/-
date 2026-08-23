@@ -30,3 +30,12 @@ Hook 的 `/QueryDB/status` 在本机返回 `IsLogin=0`，但 Hook 实发和数�
 - Python 微信通道测试：9 项通过；
 - Python 全模块编译：通过；
 - SSE 客户端主动断开：按正常连接清理处理，不输出异常栈。
+
+## 连接页开关回归
+
+- 隔离配置下调用 `POST /api/wechat/toggle {"enabled":true}`，自动定位 `C:\Program Files\Tencent\Weixin\Weixin.exe`；
+- 登录状态可从 `waiting_for_scan` 自动进入 `connected`，数据库健康检查识别到当前账号；
+- 旧进程重启顺序验证：动作前 PID `20736`，动作后 PID `17748`，旧 PID 残留数为 `0`；
+- 关闭开关后 `phase=disabled`、通道服务停止，微信客户端继续保留；
+- 浏览器 `设置 → 连接` 出现唯一可用的 `role=switch` 控件，初始 `aria-checked=false`，并展示“先关闭旧微信进程，再启动新的扫码窗口”的说明；
+- 健康状态探测采用 12 秒上限、3 秒缓存和并发单飞；Python 管理 API 忽略客户端提前断开，避免轮询产生异常堆栈。

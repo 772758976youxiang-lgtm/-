@@ -27,17 +27,26 @@ assert.equal(typeof serverPlugin.apply, "function");
 assert.equal(serverPlugin.name, "dsh-channel-im");
 assert.equal(serverPlugin.configSchema.properties.wechatPython.type, "string");
 assert.equal(serverPlugin.configSchema.properties.wechatConfig.type, "string");
+assert.equal(serverPlugin.configSchema.properties.wechatExecutable.type, "string");
 
 const client = read("lib/client.js");
 assert.match(client, /exports\.inject\s*=\s*\["slots"\]/);
 assert.match(client, /name:\s*"settings\.section"/);
 assert.match(client, /c\.mode === "wechat_pc"/);
+assert.match(client, /role:\s*"switch"/);
+assert.match(client, /"aria-checked"/);
+assert.match(client, /api\/wechat\/toggle/);
 
 const server = read("server.mjs");
 assert.match(server, /ensureConfigFile\(\)/);
 assert.match(server, /httpServer\.listen\(BRIDGE_PORT,\s*"127\.0\.0\.1"/);
 assert.match(server, /startWechatChannel/);
 assert.match(server, /"wechat_pc"/);
+assert.match(server, /launchWeChatLoginWindow/);
+assert.match(server, /closeExistingWeChatProcesses/);
+assert.match(server, /taskkill\.exe/);
+assert.match(server, /path === "\/api\/wechat\/status"/);
+assert.match(server, /path === "\/api\/wechat\/toggle"/);
 assert.doesNotMatch(server, /\{\s*\.\.\.c,\s*status:/);
 
 const installer = read("scripts/install-assets.mjs");
