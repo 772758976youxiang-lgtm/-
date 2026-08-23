@@ -1,4 +1,6 @@
-# Windows 网关（WeChat-Hook 4.1.10.27）使用说明
+# Windows 网关（旧版演示）
+
+> 正式实现已经迁移到 `wechat_channel/`。本脚本仅保留用于 Hook QueryDB 结构发现和旧 Mac 演示台兼容；新部署请使用 `python -m wechat_channel run`。
 
 ## 环境（Windows）
 1. 微信 PC **4.1.10.27**（小号登录）；关闭自动升级

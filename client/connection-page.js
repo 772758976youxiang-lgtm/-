@@ -45,7 +45,7 @@ export default function ConnectionSection({ t, readStatus }) {
                   {c.name}{dot()}<span style={{ fontSize: "12px", color: "var(--dsw-alias-label-tertiary)" }}>已连接</span>
                 </div>
                 <div style={{ fontSize: "12.5px", color: "var(--dsw-alias-label-tertiary)", marginTop: "2px" }}>
-                  {c.mode === "stream" ? "Stream 模式 · 无需公网" : (c.mode ?? "")}
+                  {c.mode === "stream" ? "Stream 模式 · 无需公网" : c.mode === "wechat_pc" ? "微信 PC · 数据库接收 · Hook/UIA/OCR 发送" : (c.mode ?? "")}
                 </div>
               </div>
             </div>

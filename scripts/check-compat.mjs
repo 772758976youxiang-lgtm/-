@@ -13,6 +13,8 @@ assert.equal(pkg.packageManager, "pnpm@11.19.0");
 assert.equal(pkg.dependencies?.["dingtalk-stream-sdk-nodejs"], "2.0.4");
 assert.equal(pkg.peerDependenciesMeta?.["@deepseek-ai/cordis"]?.optional, true);
 assert.match(pkg.scripts?.prepack ?? "", /npm test/);
+assert.match(pkg.scripts?.prepack ?? "", /clean-python-cache\.mjs/);
+assert.match(pkg.scripts?.["test:wechat"] ?? "", /run-python-tests\.mjs/);
 assert.match(pkg.scripts?.["verify:install"] ?? "", /verify-overrides\.mjs/);
 
 const bundle = read("bundle/dsh-channel-im.cordis.yml");
@@ -23,14 +25,19 @@ assert.equal((bundle.match(/@deepseek-ai\/dsh-channel-im/g) ?? []).length, 1);
 const serverPlugin = await import(pathToFileURL(path.join(root, "lib/index.js")));
 assert.equal(typeof serverPlugin.apply, "function");
 assert.equal(serverPlugin.name, "dsh-channel-im");
+assert.equal(serverPlugin.configSchema.properties.wechatPython.type, "string");
+assert.equal(serverPlugin.configSchema.properties.wechatConfig.type, "string");
 
 const client = read("lib/client.js");
 assert.match(client, /exports\.inject\s*=\s*\["slots"\]/);
 assert.match(client, /name:\s*"settings\.section"/);
+assert.match(client, /c\.mode === "wechat_pc"/);
 
 const server = read("server.mjs");
 assert.match(server, /ensureConfigFile\(\)/);
 assert.match(server, /httpServer\.listen\(BRIDGE_PORT,\s*"127\.0\.0\.1"/);
+assert.match(server, /startWechatChannel/);
+assert.match(server, /"wechat_pc"/);
 assert.doesNotMatch(server, /\{\s*\.\.\.c,\s*status:/);
 
 const installer = read("scripts/install-assets.mjs");

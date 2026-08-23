@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.2.3）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.0）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -12,7 +12,8 @@
 | 「外部打开」 | 会话详情按钮（官方 npm 版经注入生效；原生槽位插件化在后续版本） |
 | 技能 ×2 | `im-channel-setup`（通道自助接入）+ `harness-docs`（说明书自动维护） |
 | 预设 | 「机器人助手」（无命令/无联网/数字员工人格） |
-| Windows 网关 | `examples/windows-gateway/gateway.py` + 接入说明/修复指令（微信通道生产件） |
+| Windows 微信网关 | `examples/windows-gateway/gateway.py` + 旧演示接入说明 |
+| 微信个人号正式通道 | `wechat_channel/`；数据库接收、Hook→UIA/OCR 发送、SQLite、AgentAdapter、管理 API 与 SSE |
 
 ## 安装（新机器一行）
 
@@ -28,7 +29,11 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 - bundle 层自动托管：桥接随宿主启停；
 - git clone 本地开发：`dsh plugin --profile web install /path/to/this`
 
-v0.2.3 已对齐 DSH `0.1.1-rc.2` 与 pnpm 11：安装器能定位 pnpm link store 中的真实运行包，逐文件备份、覆盖并校验；任一必要覆盖缺失时安装会明确失败，不再静默显示成功。会话界面的中英文字典键已完全对称，构建测试会阻止缺失翻译的包发布。
+源码直接运行 `server.mjs` 前先执行 `npm install --ignore-scripts`；`--ignore-scripts` 可避免开发依赖安装阶段重复应用运行包 overrides。
+
+v0.3.0 新增正式 Windows 微信个人号通道。安装器继续对齐 DSH `0.1.1-rc.2` 与 pnpm 11，并强制校验 overrides 与中英文字典。
+
+微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
 ## 官方功能对齐（overrides）
 

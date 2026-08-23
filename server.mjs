@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import readline from "node:readline";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const CONFIG_FILE = process.env.DSH_CHANNELS_FILE || path.join(os.homedir(), ".dsh-im-channels.json");
 const HOST = process.env.DSH_HOST || "http://127.0.0.1:3080";
@@ -16,6 +17,9 @@ const AGENT_PRESET = process.env.DSH_AGENT_PRESET || "robot-assistant";
 const MAP_FILE = process.env.DSH_MAP_FILE || path.join(os.homedir(), ".dsh-im-bridge-map.json");
 const STATUS_FILE = process.env.DSH_STATUS_FILE || path.join(os.homedir(), ".dsh-im-channels-status.json");
 const DWS_BIN = process.env.DWS_BIN || path.join(os.homedir(), ".local", "bin", "dws");
+const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const PYTHON_BIN = process.env.DSH_WECHAT_PYTHON || (process.platform === "win32" ? "python" : "python3");
+const DEFAULT_WECHAT_CONFIG = process.env.DSH_WECHAT_CONFIG || path.join(os.homedir(), ".dsh-wechat-channel.json");
 
 const NOW = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => console.log(`[${NOW()}]`, ...a);
@@ -354,6 +358,50 @@ function startDwsListener(cfg) {
 }
 function stopDwsListener(id) { const st = dwsState.get(id); if (!st) return; try { st.child?.kill("SIGTERM"); } catch {} dwsState.delete(id); log(`[dws 监听停止] ${id}`); }
 
+// ---------- 微信个人号通道（数据库接收 + Hook/UIA/OCR 发送） ----------
+const wechatState = new Map(); // 通道id -> { cfg, child, connected, stopping }
+function startWechatChannel(cfg) {
+  if (wechatState.has(cfg.id)) return;
+  const state = { cfg, child: null, connected: false, stopping: false };
+  const start = () => {
+    const configFile = cfg.configFile || DEFAULT_WECHAT_CONFIG;
+    const args = ["-m", "wechat_channel", "run"];
+    if (fs.existsSync(configFile)) args.push("--config", configFile);
+    const child = spawn(PYTHON_BIN, args, {
+      cwd: PLUGIN_ROOT,
+      shell: false,
+      env: { ...process.env, PYTHONPATH: [PLUGIN_ROOT, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) },
+      windowsHide: true,
+    });
+    state.child = child;
+    state.connected = false;
+    log(`[微信通道] 启动 ${cfg.id} (${cfg.name ?? "微信个人号"}) config=${configFile}`);
+    readline.createInterface({ input: child.stdout }).on("line", (line) => {
+      if (line.includes("WeChat management API:")) { state.connected = true; writeStatus(); }
+      log(`[微信 ${cfg.id}] ${line}`);
+    });
+    readline.createInterface({ input: child.stderr }).on("line", (line) => log(`[微信 ${cfg.id} stderr] ${line}`));
+    child.on("error", (error) => { state.connected = false; log(`[微信 ${cfg.id}] 启动失败: ${error?.message ?? error}`); writeStatus(); });
+    child.on("close", (code) => {
+      state.child = null;
+      state.connected = false;
+      writeStatus();
+      log(`[微信 ${cfg.id}] 退出 code=${code}${state.stopping ? "" : "，3s 后重启"}`);
+      if (!state.stopping && wechatState.has(cfg.id)) setTimeout(start, 3000);
+    });
+  };
+  wechatState.set(cfg.id, state);
+  start();
+}
+function stopWechatChannel(id) {
+  const state = wechatState.get(id);
+  if (!state) return;
+  state.stopping = true;
+  try { state.child?.kill("SIGTERM"); } catch {}
+  wechatState.delete(id);
+  log(`[微信通道] 停止 ${id}`);
+}
+
 // ---------- 通道管理（配置驱动 + 热加载） ----------
 const channels = new Map(); // id -> { cfg, client, lastActivity, watchdog }
 function loadConfig() {
@@ -388,11 +436,20 @@ function disconnectChannel(id) {
   channels.delete(id);
   log(`[通道 ${id}] 已断开`);
 }
+function channelStatus(c) {
+  if (!c.enabled) return "disabled";
+  if (c.mode === "wechat_pc") {
+    const state = wechatState.get(c.id);
+    return state?.connected ? "connected" : state?.child ? "connecting" : "failed";
+  }
+  if (c.mode === "dws") return dwsState.has(c.id) ? "connected" : "failed";
+  return channels.has(c.id) ? (channels.get(c.id).connected ? "connected" : "connecting") : "failed";
+}
 function writeStatus() {
   const cfgs = loadConfig();
   const items = cfgs.map((c) => ({
     id: c.id, platform: c.platform, name: c.name, mode: c.mode, enabled: !!c.enabled,
-    status: c.mode === "dws" ? (dwsState.has(c.id) ? "connected" : (c.enabled ? "failed" : "disabled")) : channels.has(c.id) ? (channels.get(c.id).connected ? "connected" : "connecting") : (c.enabled ? "failed" : "disabled"),
+    status: channelStatus(c),
   }));
   try { fs.writeFileSync(STATUS_FILE, JSON.stringify({ channels: items, ts: Date.now() }, null, 2)); } catch (e) { log("[写状态文件失败]", e?.message ?? e); }
 }
@@ -404,10 +461,17 @@ function syncChannels() {
     if (!cfg || !cfg.enabled) disconnectChannel(id);
     else if (cfg.appKey !== channels.get(id).cfg.appKey || cfg.appSecret !== channels.get(id).cfg.appSecret) { disconnectChannel(id); connectChannel(cfg); }
   }
-  for (const cfg of cfgs) if (cfg.enabled && cfg.mode !== "dws" && cfg.appKey && cfg.appSecret && !channels.has(cfg.id)) connectChannel(cfg);
+  for (const cfg of cfgs) if (cfg.enabled && cfg.mode !== "dws" && cfg.mode !== "wechat_pc" && cfg.appKey && cfg.appSecret && !channels.has(cfg.id)) connectChannel(cfg);
   for (const id of [...dwsState.keys()]) { const cfg = byId.get(id); if (!cfg || !cfg.enabled) stopDwsListener(id); }
   for (const cfg of cfgs) if (cfg.enabled && cfg.mode === "dws" && !dwsState.has(cfg.id)) startDwsListener(cfg);
-  log(`[sync] 已连接通道: ${[...channels.keys()].join(", ") || "(无)"}${dwsState.size ? " | dws: " + [...dwsState.keys()].join(", ") : ""}`);
+  for (const id of [...wechatState.keys()]) {
+    const cfg = byId.get(id);
+    const current = wechatState.get(id)?.cfg;
+    if (!cfg || !cfg.enabled || cfg.mode !== "wechat_pc") stopWechatChannel(id);
+    else if ((cfg.configFile || DEFAULT_WECHAT_CONFIG) !== (current?.configFile || DEFAULT_WECHAT_CONFIG)) { stopWechatChannel(id); startWechatChannel(cfg); }
+  }
+  for (const cfg of cfgs) if (cfg.enabled && cfg.mode === "wechat_pc" && !wechatState.has(cfg.id)) startWechatChannel(cfg);
+  log(`[sync] 已连接通道: ${[...channels.keys()].join(", ") || "(无)"}${dwsState.size ? " | dws: " + [...dwsState.keys()].join(", ") : ""}${wechatState.size ? " | wechat: " + [...wechatState.keys()].join(", ") : ""}`);
   writeStatus();
 }
 
@@ -444,7 +508,7 @@ const httpServer = http.createServer((req, res) => {
       name: c.name,
       mode: c.mode,
       enabled: c.enabled,
-      status: c.mode === "dws" ? (dwsState.has(c.id) ? "connected" : (c.enabled ? "failed" : "disabled")) : channels.has(c.id) ? (channels.get(c.id).connected ? "connected" : "connecting") : (c.enabled ? "failed" : "disabled"),
+      status: channelStatus(c),
     }));
     return send(200, { ok: true, channels: items });
   }
@@ -452,7 +516,7 @@ const httpServer = http.createServer((req, res) => {
     let body = ""; req.on("data", (d) => body += d); req.on("end", () => {
       try {
         const cfg = JSON.parse(body || "{}");
-        if (!cfg.id || (cfg.mode !== "dws" && (!cfg.appKey || !cfg.appSecret))) return send(400, { ok: false, error: "需要 id ，以及 appKey/appSecret（stream 模式）" });
+        if (!cfg.id || (!["dws", "wechat_pc"].includes(cfg.mode) && (!cfg.appKey || !cfg.appSecret))) return send(400, { ok: false, error: "需要 id；stream 模式还需要 appKey/appSecret" });
         const cfgs = loadConfig();
         const idx = cfgs.findIndex((c) => c.id === cfg.id);
         if (idx >= 0) cfgs[idx] = { ...cfgs[idx], ...cfg }; else cfgs.push(cfg);
@@ -476,5 +540,12 @@ const httpServer = http.createServer((req, res) => {
 });
 httpServer.listen(BRIDGE_PORT, "127.0.0.1", () => log(`[管理API] http://127.0.0.1:${BRIDGE_PORT}/api/channels (GET/POST/DELETE)`));
 
-process.on("SIGINT", () => { for (const [, ch] of channels) try { ch.client.disconnect(); } catch {} process.exit(0); });
-process.on("SIGTERM", () => { for (const [, ch] of channels) try { ch.client.disconnect(); } catch {} process.exit(0); });
+function shutdown() {
+  for (const [, ch] of channels) try { ch.client.disconnect(); } catch {}
+  for (const id of [...dwsState.keys()]) stopDwsListener(id);
+  for (const id of [...wechatState.keys()]) stopWechatChannel(id);
+  try { httpServer.close(); } catch {}
+  setTimeout(() => process.exit(0), 200);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
