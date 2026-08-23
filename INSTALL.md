@@ -31,8 +31,9 @@ dsh plugin --profile web install /absolute/path/to/dsh-channel-im-plugin
 
 ### 方式 3：源码构建版（从 deepseek-harness 源码跑）
 ```bash
-# 同方式 1/2 安装本插件（源码构建时代理位置为源码仓库 node_modules；patch 层同样生效）
-# ⚠️ 注意坑 2：此时「连接」页/「外部打开」不适用（指向官方 npm 版 bundle），敬请知悉
+# 同方式 1/2 安装；「连接」页由原生 dsh.client 提供。
+# 若源码仓库使用自定义依赖布局，显式提供作用域根目录：
+DSH_CHANNEL_IM_TARGET_ROOTS=/path/to/deepseek-harness/node_modules/@deepseek-ai dsh plugin --profile web install /path/to/this
 ```
 
 ## 三、常见坑（务必先读）
@@ -40,8 +41,9 @@ dsh plugin --profile web install /absolute/path/to/dsh-channel-im-plugin
 | # | 坑 | 现象 | 解法 |
 |---|---|---|---|
 | 1 | **pnpm 未安装** | `dsh plugin` 安装命令报 pnpm 错误 | `npm i -g pnpm`；或直接手动：`cd ~/.dsh/profiles/web && pnpm add <包>` |
-| 2 | **源码构建版** | 连接页/外部打开不出现（postinstall 提示“未找到 DSH 设置包”） | 用**官方 npm 版** DSH（`npm i -g @deepseek-ai/dsh && npx dsh web`）；源码构建版这两项暂无原生实现 |
+| 2 | **源码构建版/自定义布局** | postinstall 提示找不到 7 个目标包 | 设置 `DSH_CHANNEL_IM_TARGET_ROOTS` 指向该构建的 `node_modules/@deepseek-ai`；安装器仍会强制核对包名与 DSH 版本 |
 | 3 | **postinstall 被 pnpm 阻止** | `ERR_PNPM_IGNORED_BUILDS`，技能/预设没装 | `cd ~/.dsh/profiles/web && pnpm approve-builds`，批准本插件后重新安装；仍失败再手动运行 `node node_modules/@deepseek-ai/dsh-channel-im/scripts/install-assets.mjs` |
+| 3a | **pnpm link store** | 插件包存在余额/峰谷代码，但 Web 不显示 | v0.2.2 已自动扫描 pnpm `store/v*/links` 并校验 7 个目标包；运行 `npm run verify:install` 复核。自定义布局可设置 `DSH_CHANNEL_IM_TARGET_ROOTS=<node_modules/@deepseek-ai>` |
 | 4 | **凭证未配** | 能启动但对话不通（模型 key 未填）/ 连接页空（无通道配置） | 按“凭证自理 4 项”：模型 Key（设置→模型）、钉钉机器人凭证/数字人扫码、微信小号+hook（Windows） |
 | 5 | **端口冲突** | 桥接管理API 5175 被占用 | 改 bundle 行 `managementPort`（`~/.dsh/profiles/web/cordis.patch.yml` 可覆盖），或停掉占进程 |
 | 6 | **3080 被旧进程占用** | 新宿主起不来/页面是旧版 | 停旧 `dsh web` 进程再启 |
@@ -61,11 +63,29 @@ curl -s http://127.0.0.1:5175/api/channels     # 应返回 JSON（含通道列�
 ls ~/.dsh/skills/ | grep -E "im-channel-setup|harness-docs"
 ls ~/.dsh/.agent-presets/robot-assistant/
 # 设置页：预设出现「机器人助手」；「连接」出现（官方 npm 版）
+# 余额/峰谷等 7 包覆盖完整性（在插件目录执行）：
+npm run verify:install
 # 模型自检：
 npx dsh --profile headless "你好"
 ```
 
-## 五、文档索引
+## 五、开发构建与发布前检查
+
+```bash
+# Node.js >= 18；本仓库不需要 TypeScript 编译，生产产物已放在 overrides/。
+npm test
+npm pack
+
+# 从生成的 tgz 做真实安装后，再校验运行包：
+npm run verify:install
+```
+
+- `packageManager` 固定为 pnpm 11.19.0，钉钉 SDK 固定为已验证的 2.0.4；Cordis peer 标记为宿主提供的 optional peer，避免独立打包时产生误导性缺失警告。
+- `prepack` 自动运行测试；路径发现和备份覆盖均有 Node 内置测试，不需要额外开发依赖。
+- 安装器仅覆盖版本完全匹配的 DSH `0.1.1-rc.2` 包，并把首次原文件保存到各包 `lib/.dsh-channel-im-backup/`。
+- 若确实只想安装桥接而跳过官方功能覆盖，可显式设置 `DSH_CHANNEL_IM_ALLOW_PARTIAL_INSTALL=1`；默认缺包即失败，避免半安装。
+
+## 六、文档索引
 
 - 总览/模块清单：`README.md`
 - Windows 微信通道：`examples/windows-gateway/gateway-说明.md`、`微信群聊通道接入说明.md`

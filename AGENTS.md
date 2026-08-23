@@ -16,11 +16,12 @@
    - 或 `dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm/-.git`
    若 `dsh plugin` 因 pnpm 缺失失败：`npm i -g pnpm` 后重试。
    若 pnpm 11 报 `ERR_PNPM_IGNORED_BUILDS`：进入 `~/.dsh/profiles/web` 运行 `pnpm approve-builds`，批准 `@deepseek-ai/dsh-channel-im` 后重新执行安装命令。
-5. **确保用官方 npm 版 DSH 运行**：`npx dsh web`（若发现本机是源码构建版——设置页标题含 Local Build——不要继续打补丁，先统一为官方 npm 版并重启；原因见 INSTALL.md 坑2）。
+5. **运行 DSH**：优先 `npx dsh web`。源码构建版或自定义依赖布局若自动定位失败，按 INSTALL.md 设置 `DSH_CHANNEL_IM_TARGET_ROOTS` 后重新安装；不要手工修改 DSH 文件。
 6. **验证清单**（逐项执行并汇报）：
    - `curl -s http://127.0.0.1:5175/api/channels` → JSON
    - `ls ~/.dsh/skills/` → 含 `im-channel-setup.md`、`harness-docs.md`
    - `ls ~/.dsh/.agent-presets/robot-assistant/` → 两个文件存在
+   - 在插件目录执行 `npm run verify:install` → 7 个 overrides 全部显示 `verified`
    - 浏览器 127.0.0.1:3080：设置→预设 有「机器人助手」；设置→连接 出现（npm 版）
    - `npx dsh --profile headless "你好"` 正常回答（若未配 API Key：提示用户在 设置→模型 填入 → 这是“凭证自理”，不要替用户生成/猜测密钥）
 7. **失败处理**：先查 `INSTALL.md` 第三节“坑排查表”；仍失败则汇报完整报错与我采取的排查动作。
@@ -28,5 +29,5 @@
 ## 红线
 
 - **不生成/不猜测任何凭证**（API Key、通道 Secret、登录态）：一律由用户在设置页/钉钉侧提供（凭证自理约定）。
-- **不改 DSH 源码**；不删除/重建 GitHub 默认分支。
+- **不手工改 DSH 源码**；仅允许插件安装器对版本完全匹配的运行包应用可校验 overrides；不删除/重建 GitHub 默认分支。
 - 安装后如需常驻：`pm2`/服务方式启动 `npx dsh web`（可选，不强制）。

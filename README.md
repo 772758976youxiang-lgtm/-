@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.2.1）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.2.2）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -28,13 +28,15 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 - bundle 层自动托管：桥接随宿主启停；
 - git clone 本地开发：`dsh plugin --profile web install /path/to/this`
 
-v0.2.1 已对齐 DSH `0.1.1-rc.2` 的 bundle manifest、Cordis `apply`/`inject` 与 settings slot 契约。
+v0.2.2 已对齐 DSH `0.1.1-rc.2` 与 pnpm 11：安装器能定位 pnpm link store 中的真实运行包，逐文件备份、覆盖并校验；任一必要覆盖缺失时安装会明确失败，不再静默显示成功。
 
 ## 官方功能对齐（overrides）
 
 本插件内置 7 个包的**编译产物覆盖**（来自私人仓库 `3ef702b` 提交，共 43 文件的功能改造）：
 **峰谷计价 / 周末全天谷价 / token 成本估算 / 账户余额 / “燃烧 token”提示 / 文件查看 / 相关中文文案**。
-安装时 postinstall 自动覆盖到官方 npm 包上 → **官方 harness + 本插件 = 完整（含这些功能改造）**，无需从源码构建。
+安装时 postinstall 自动覆盖到官方 npm 包上 → **官方 harness + 本插件 = 完整（含这些功能改造）**，无需从源码构建。覆盖仅应用于 DSH `0.1.1-rc.2`，避免误改不兼容版本。
+
+安装后可执行 `npm run verify:install`，对 7 个运行包逐文件进行 SHA-256 校验。源码检查与打包分别使用 `npm test`、`npm pack`；`prepack` 会自动先执行完整测试。安装器会先预检全部目标的版本和写权限，再开始覆盖，避免缺包时留下半安装状态。
 
 ## 凭证自理（设计约定）
 
@@ -42,5 +44,5 @@ API Key / 通道 AppKey·Secret / 数字人登录态 **一律不入包**；新�
 
 ## 说明
 
-- 演示台（开发验证用）已全部移除；本包只含生产件。
-- 源码构建版：连接页/外部打开为“官方 npm 版注入”；原生 client 插件化在后续版本。
+- 演示台和旧版字符串注入脚本已移除；“连接”由原生 client 插件提供，“外部打开”随版本化 overrides 安装。
+- 源码构建版或自定义依赖布局可用 `DSH_CHANNEL_IM_TARGET_ROOTS` 指定 `node_modules/@deepseek-ai`。

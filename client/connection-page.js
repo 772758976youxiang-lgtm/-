@@ -2,7 +2,7 @@
  * dsh-channel-im · 「连接」设置页（external-connections）源码（可读参考版）
  *
  * 这是注入到 DSH 设置面板的【连接】页组件（读取桥接状态文件并 5 秒轮询）。
- * 实际安装时以编译形态（见 connection.compiled.js）由 patch-settings.mjs 注入
+ * 发布时对应 lib/client.js 的原生 dsh.client 模块，不再修改官方设置包。
  * node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js。
  *
  * 需配合：
