@@ -15,6 +15,7 @@
    - `dsh plugin --profile web install <本仓库绝对路径>`
    - 或 `dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm/-.git`
    若 `dsh plugin` 因 pnpm 缺失失败：`npm i -g pnpm` 后重试。
+   若 pnpm 11 报 `ERR_PNPM_IGNORED_BUILDS`：进入 `~/.dsh/profiles/web` 运行 `pnpm approve-builds`，批准 `@deepseek-ai/dsh-channel-im` 后重新执行安装命令。
 5. **确保用官方 npm 版 DSH 运行**：`npx dsh web`（若发现本机是源码构建版——设置页标题含 Local Build——不要继续打补丁，先统一为官方 npm 版并重启；原因见 INSTALL.md 坑2）。
 6. **验证清单**（逐项执行并汇报）：
    - `curl -s http://127.0.0.1:5175/api/channels` → JSON

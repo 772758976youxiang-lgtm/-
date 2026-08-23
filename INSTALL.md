@@ -4,8 +4,8 @@
 
 DSH（deepseek-harness）的插件 = **Bundle**：
 - **Profile**：宿主目录（Harness home，如 `~/.dsh/profiles/web/`）下的“命名组合”，列出它叠加的 bundles + 用户自己的 `cordis.patch.yml`；
-- **Bundle**：一个 npm 包，`package.json` 里声明 `"dsh": { "bundle": "<patch 文件>" }`；patch 文件是 cordis 行（对已有行按 id 改配置，或插入新行）；
-- 本插件声明：`dsh.bundle = bundle/dsh-channel-im.cordis.yml` → **插入服务行 `channel-im-bridge`**（`@deepseek-ai/dsh-channel-im`），随宿主启动/停止托管桥接；
+- **Bundle**：一个 npm 包，`package.json` 里声明 `"dsh": { "bundle": { "patch": "<patch 文件>" } }`；patch 文件是 cordis 行（对已有行按 id 改配置，或插入新行）；
+- 本插件声明：`dsh.bundle.patch = bundle/dsh-channel-im.cordis.yml` → **插入服务行 `channel-im-bridge`**（`@deepseek-ai/dsh-channel-im`），随宿主启动/停止托管桥接；同一包的 `dsh.client` 面注册“连接”页，不重复插入第二个服务实例；
 - **安装命令**（`dsh plugin`）会把剩余参数转发给 profile 目录内的 pnpm 安装/卸载包，并更新该 profile 的 bundles 列表（读取包 `package.json` 的 `dsh.bundle`）。
 
 ## 二、安装方法
@@ -15,6 +15,9 @@ DSH（deepseek-harness）的插件 = **Bundle**：
 # 0) 前置：Node ≥18、dsh CLI（npm i -g @deepseek-ai/dsh）、GitHub SSH key 可访问私人仓库
 # 1) 安装（自动初始化 profile web）
 dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm/-.git
+# pnpm 11 若提示 ERR_PNPM_IGNORED_BUILDS：
+cd ~/.dsh/profiles/web && pnpm approve-builds
+# 选择 @deepseek-ai/dsh-channel-im 后，回到原目录重新执行安装命令
 # 2) 启动宿主（插件 postinstall 已自动装配：技能/预设/连接页/外部打开）
 npx dsh web          # 或你原有的启动方式
 # 3) 自检（见第四节）
@@ -38,7 +41,7 @@ dsh plugin --profile web install /absolute/path/to/dsh-channel-im-plugin
 |---|---|---|---|
 | 1 | **pnpm 未安装** | `dsh plugin` 安装命令报 pnpm 错误 | `npm i -g pnpm`；或直接手动：`cd ~/.dsh/profiles/web && pnpm add <包>` |
 | 2 | **源码构建版** | 连接页/外部打开不出现（postinstall 提示“未找到 DSH 设置包”） | 用**官方 npm 版** DSH（`npm i -g @deepseek-ai/dsh && npx dsh web`）；源码构建版这两项暂无原生实现 |
-| 3 | **postinstall 报错被吞** | 技能/预设没装、连接页没有 | 手动跑：`node node_modules/@deepseek-ai/dsh-channel-im/scripts/install-assets.mjs` 看完整输出 |
+| 3 | **postinstall 被 pnpm 阻止** | `ERR_PNPM_IGNORED_BUILDS`，技能/预设没装 | `cd ~/.dsh/profiles/web && pnpm approve-builds`，批准本插件后重新安装；仍失败再手动运行 `node node_modules/@deepseek-ai/dsh-channel-im/scripts/install-assets.mjs` |
 | 4 | **凭证未配** | 能启动但对话不通（模型 key 未填）/ 连接页空（无通道配置） | 按“凭证自理 4 项”：模型 Key（设置→模型）、钉钉机器人凭证/数字人扫码、微信小号+hook（Windows） |
 | 5 | **端口冲突** | 桥接管理API 5175 被占用 | 改 bundle 行 `managementPort`（`~/.dsh/profiles/web/cordis.patch.yml` 可覆盖），或停掉占进程 |
 | 6 | **3080 被旧进程占用** | 新宿主起不来/页面是旧版 | 停旧 `dsh web` 进程再启 |

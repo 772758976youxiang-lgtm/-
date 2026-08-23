@@ -1,20 +1,24 @@
 {
   "name": "@deepseek-ai/dsh-channel-im",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DSH 外部功能一站式插件：IM 通道桥接（钉钉/企微/微信群聊）+ 数字人扫码 + 「连接」页/「外部打开」 + 技能×2 + 「机器人助手」预设 + Windows 微信网关与接入文档。harness 本体之外的所有扩展，一个插件全包。",
   "type": "module",
   "exports": {
     ".": "./lib/index.js",
-    "./client": "./lib/client.js"
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
   },
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "postinstall": "node scripts/install-assets.mjs"
+    "postinstall": "node scripts/install-assets.mjs",
+    "test": "node --check lib/index.js && node --check lib/client.js && node --check server.mjs && node scripts/check-compat.mjs"
   },
   "dsh": {
-    "bundle": "bundle/dsh-channel-im.cordis.yml",
+    "bundle": {
+      "patch": "bundle/dsh-channel-im.cordis.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",

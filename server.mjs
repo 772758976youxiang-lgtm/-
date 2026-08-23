@@ -20,6 +20,17 @@ const DWS_BIN = process.env.DWS_BIN || path.join(os.homedir(), ".local", "bin", 
 const NOW = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => console.log(`[${NOW()}]`, ...a);
 
+function ensureConfigFile() {
+  try {
+    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ channels: [] }, null, 2), { flag: "wx" });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+}
+
+ensureConfigFile();
+
 // ---------- 会话映射（externalId -> sessionId，全局共享） ----------
 let sessionMap = {};
 try { sessionMap = JSON.parse(fs.readFileSync(MAP_FILE, "utf8")); } catch {}
@@ -410,10 +421,31 @@ syncChannels();
 const BRIDGE_PORT = Number(process.env.DSH_BRIDGE_PORT || 5175);
 function saveConfig(cfgs) { try { fs.writeFileSync(CONFIG_FILE, JSON.stringify({ channels: cfgs }, null, 2)); } catch (e) { log("[写配置失败]", e?.message ?? e); } }
 const httpServer = http.createServer((req, res) => {
-  const send = (code, obj) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(obj)); };
+  const origin = req.headers.origin;
+  const allowOrigin = typeof origin === "string" && /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(origin) ? origin : null;
+  const headers = {
+    "Content-Type": "application/json",
+    ...(allowOrigin ? { "Access-Control-Allow-Origin": allowOrigin, Vary: "Origin" } : {}),
+  };
+  const send = (code, obj) => { res.writeHead(code, headers); res.end(JSON.stringify(obj)); };
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      ...headers,
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    });
+    return res.end();
+  }
   const path = new URL(req.url, "http://localhost").pathname;
   if (req.method === "GET" && path === "/api/channels") {
-    const items = loadConfig().map((c) => ({ ...c, status: c.mode === "dws" ? (dwsState.has(c.id) ? "connected" : (c.enabled ? "failed" : "disabled")) : channels.has(c.id) ? (channels.get(c.id).connected ? "connected" : "connecting") : (c.enabled ? "failed" : "disabled") }));
+    const items = loadConfig().map((c) => ({
+      id: c.id,
+      platform: c.platform,
+      name: c.name,
+      mode: c.mode,
+      enabled: c.enabled,
+      status: c.mode === "dws" ? (dwsState.has(c.id) ? "connected" : (c.enabled ? "failed" : "disabled")) : channels.has(c.id) ? (channels.get(c.id).connected ? "connected" : "connecting") : (c.enabled ? "failed" : "disabled"),
+    }));
     return send(200, { ok: true, channels: items });
   }
   if (req.method === "POST" && path === "/api/channels") {
@@ -442,6 +474,7 @@ const httpServer = http.createServer((req, res) => {
   }
   send(404, { ok: false, error: "not found" });
 });
-httpServer.listen(BRIDGE_PORT, () => log(`[管理API] http://127.0.0.1:${BRIDGE_PORT}/api/channels (GET/POST/DELETE)`));
+httpServer.listen(BRIDGE_PORT, "127.0.0.1", () => log(`[管理API] http://127.0.0.1:${BRIDGE_PORT}/api/channels (GET/POST/DELETE)`));
 
 process.on("SIGINT", () => { for (const [, ch] of channels) try { ch.client.disconnect(); } catch {} process.exit(0); });
+process.on("SIGTERM", () => { for (const [, ch] of channels) try { ch.client.disconnect(); } catch {} process.exit(0); });

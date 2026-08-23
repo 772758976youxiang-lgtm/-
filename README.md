@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.2）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.2.1）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -22,9 +22,13 @@
 dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm/-.git
 ```
 
+若 pnpm 11 首次安装提示 `ERR_PNPM_IGNORED_BUILDS`，进入 `~/.dsh/profiles/web` 运行 `pnpm approve-builds`，批准 `@deepseek-ai/dsh-channel-im` 后重试上述命令。
+
 - postinstall 自动装配：技能/预设/连接页/外部打开；
 - bundle 层自动托管：桥接随宿主启停；
 - git clone 本地开发：`dsh plugin --profile web install /path/to/this`
+
+v0.2.1 已对齐 DSH `0.1.1-rc.2` 的 bundle manifest、Cordis `apply`/`inject` 与 settings slot 契约。
 
 ## 官方功能对齐（overrides）
 

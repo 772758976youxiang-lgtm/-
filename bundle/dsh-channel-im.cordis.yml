@@ -1,10 +1,6 @@
-# dsh-channel-im Bundle patch：向 profile 叠加“IM 通道桥接”服务
-- id: channel-im-bridge
-  name: '@deepseek-ai/dsh-channel-im'
-  config:
-    managementPort: 5175
-
-# 浏览器半：注册「连接」设置页（同一包的 dsh.client 面）
+# dsh-channel-im Bundle patch：插入桥接服务；同一行的 dsh.client 面注册「连接」页。
 - insert:
-    - id: im-channel-ui
+    - id: channel-im-bridge
       name: '@deepseek-ai/dsh-channel-im'
+      config:
+        managementPort: 5175
