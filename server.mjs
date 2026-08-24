@@ -9,6 +9,11 @@ import readline from "node:readline";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createConfirmationStore, WechatControlError } from "./wechat-version-policy.mjs";
+import { createWechatDiscovery } from "./wechat-windows-discovery.mjs";
+import { createArtifactManager } from "./wechat-installer-artifact.mjs";
+import { createWechatInstallManager, runElevatedWechatHelper, verifyWechatUpdateSuppression } from "./wechat-install-manager.mjs";
+import { createWechatChannelController } from "./wechat-channel-controller.mjs";
 
 const CONFIG_FILE = process.env.DSH_CHANNELS_FILE || path.join(os.homedir(), ".dsh-im-channels.json");
 const HOST = process.env.DSH_HOST || "http://127.0.0.1:3080";
@@ -20,7 +25,6 @@ const DWS_BIN = process.env.DWS_BIN || path.join(os.homedir(), ".local", "bin", 
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PYTHON_BIN = process.env.DSH_WECHAT_PYTHON || (process.platform === "win32" ? "python" : "python3");
 const DEFAULT_WECHAT_CONFIG = process.env.DSH_WECHAT_CONFIG || path.join(os.homedir(), ".dsh-wechat-channel.json");
-const WECHAT_EXECUTABLE = process.env.DSH_WECHAT_EXECUTABLE || "";
 const WECHAT_CHANNEL_ID = "wechat-personal";
 
 const NOW = () => new Date().toISOString().slice(11, 19);
@@ -36,6 +40,7 @@ function ensureConfigFile() {
 }
 
 ensureConfigFile();
+let lastHandledConfigContent = fs.readFileSync(CONFIG_FILE, "utf8");
 
 // ---------- 会话映射（externalId -> sessionId，全局共享） ----------
 let sessionMap = {};
@@ -364,6 +369,7 @@ function stopDwsListener(id) { const st = dwsState.get(id); if (!st) return; try
 const wechatState = new Map(); // 通道id -> { cfg, child, connected, loggedIn, stopping, lastError }
 const wechatLaunchState = { launchedAt: 0, executable: "", lastError: "" };
 const wechatHealthCache = { url: "", at: 0, value: null, pending: null };
+let wechatRuntimeAllowed = false;
 function startWechatChannel(cfg) {
   if (wechatState.has(cfg.id)) return;
   const state = { cfg, child: null, connected: false, loggedIn: false, stopping: false, lastError: "", lastStderr: "" };
@@ -443,29 +449,13 @@ function capture(command, args, timeoutMs = 5000) {
 async function isWeChatProcessRunning() {
   if (process.platform !== "win32") return false;
   const result = await capture("tasklist.exe", ["/FI", "IMAGENAME eq Weixin.exe", "/FI", "STATUS eq RUNNING", "/FO", "CSV", "/NH"]);
-  if (/Weixin\.exe/i.test(result.stdout)) return true;
-  const legacy = await capture("tasklist.exe", ["/FI", "IMAGENAME eq WeChat.exe", "/FO", "CSV", "/NH"]);
-  return /WeChat\.exe/i.test(legacy.stdout);
-}
-
-function findWeChatExecutable() {
-  if (process.platform !== "win32") return "";
-  const candidates = [
-    WECHAT_EXECUTABLE,
-    path.join(process.env.ProgramW6432 || "C:\\Program Files", "Tencent", "Weixin", "Weixin.exe"),
-    path.join(process.env.ProgramFiles || "C:\\Program Files", "Tencent", "Weixin", "Weixin.exe"),
-    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Tencent", "WeChat", "WeChat.exe"),
-    path.join(process.env.LOCALAPPDATA || "", "Tencent", "Weixin", "Weixin.exe"),
-  ].filter(Boolean);
-  return candidates.find((candidate) => fs.existsSync(candidate)) || "";
+  return /Weixin\.exe/i.test(result.stdout);
 }
 
 async function closeExistingWeChatProcesses() {
   if (process.platform !== "win32") return;
-  for (const image of ["Weixin.exe", "WeChat.exe"]) {
-    const result = await capture("taskkill.exe", ["/IM", image, "/T", "/F"], 10000);
-    if (result.code === 0) log(`[微信登录] 已关闭旧进程 ${image}`);
-  }
+  const result = await capture("taskkill.exe", ["/IM", "Weixin.exe", "/T", "/F"], 10000);
+  if (result.code === 0) log("[微信登录] 已关闭旧进程 Weixin.exe");
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
     if (!(await isWeChatProcessRunning())) return;
@@ -474,10 +464,9 @@ async function closeExistingWeChatProcesses() {
   throw new Error("旧微信进程未能在 10 秒内退出，请手动关闭后重试");
 }
 
-async function launchWeChatLoginWindow() {
+async function launchWeChatLoginWindow(executable) {
   if (process.platform !== "win32") throw new Error("微信个人号通道仅支持 Windows");
-  const executable = findWeChatExecutable();
-  if (!executable) throw new Error("未找到微信客户端，请安装微信 4.x，或配置 DSH_WECHAT_EXECUTABLE");
+  if (!executable || path.win32.basename(executable).toLowerCase() !== "weixin.exe") throw new Error("未找到已校验的微信 4.x 客户端");
   await closeExistingWeChatProcesses();
   const child = spawn(executable, [], { detached: true, stdio: "ignore", windowsHide: false, shell: false });
   child.unref();
@@ -575,7 +564,36 @@ function getWechatConfigEntry() {
   return loadConfig().find((item) => item.mode === "wechat_pc") || null;
 }
 
+async function persistWechatEnabled(enabled) {
+  const cfgs = loadConfig();
+  const index = cfgs.findIndex((item) => item.mode === "wechat_pc");
+  const previous = index >= 0 ? cfgs[index] : {};
+  const next = {
+    ...previous,
+    id: previous.id || WECHAT_CHANNEL_ID,
+    platform: "wechat",
+    name: previous.name || "微信个人号",
+    mode: "wechat_pc",
+    configFile: previous.configFile || DEFAULT_WECHAT_CONFIG,
+    enabled: Boolean(enabled),
+  };
+  if (index >= 0) cfgs[index] = next;
+  else cfgs.push(next);
+  saveConfig(cfgs);
+  const persisted = getWechatConfigEntry();
+  if (!persisted || Boolean(persisted.enabled) !== Boolean(enabled)) throw new Error("微信开关配置未能持久化");
+  wechatHealthCache.at = 0;
+  wechatHealthCache.value = null;
+  syncChannels();
+}
+
+async function stopWechatRuntime() {
+  const cfg = getWechatConfigEntry();
+  stopWechatChannel(cfg?.id || WECHAT_CHANNEL_ID);
+}
+
 async function getWechatControlStatus() {
+  const policy = await wechatController.status();
   const cfg = getWechatConfigEntry();
   const enabled = !!cfg?.enabled;
   const [processRunning, service] = await Promise.all([isWeChatProcessRunning(), readWechatServiceStatus(cfg)]);
@@ -589,12 +607,14 @@ async function getWechatControlStatus() {
     else if (loggedIn) state.lastError = "";
   }
   let phase = "disabled";
-  if (enabled && loggedIn) phase = "connected";
+  const installPhase = policy.install?.phase;
+  if (["downloading", "verifying", "requesting_admin", "installing", "verifying_install"].includes(installPhase)) phase = installPhase;
+  else if (enabled && loggedIn) phase = "connected";
   else if (enabled && processRunning) phase = "waiting_for_scan";
   else if (enabled) phase = "starting";
+  else if (installPhase === "failed") phase = "failed";
   return {
-    ok: true,
-    supported: process.platform === "win32",
+    ...policy,
     configured: !!cfg,
     enabled,
     channelId: cfg?.id || WECHAT_CHANNEL_ID,
@@ -602,49 +622,22 @@ async function getWechatControlStatus() {
     processRunning,
     serviceRunning,
     loggedIn,
-    executable: wechatLaunchState.executable || findWeChatExecutable(),
+    executable: policy.executable || wechatLaunchState.executable || null,
     launchedAt: wechatLaunchState.launchedAt || null,
     account: loggedIn ? {
       id: service?.receive?.details?.account_id || "",
       nickname: service?.receive?.details?.nickname || "",
     } : null,
-    error: state?.lastError || wechatLaunchState.lastError || service?.last_error || "",
+    error: policy.install?.error || state?.lastError || wechatLaunchState.lastError || service?.last_error || "",
   };
 }
 
 async function toggleWechatChannel(enabled) {
   if (process.platform !== "win32") throw new Error("微信个人号通道仅支持 Windows");
-  const cfgs = loadConfig();
-  let index = cfgs.findIndex((item) => item.mode === "wechat_pc");
-  const previous = index >= 0 ? cfgs[index] : {};
-  const next = {
-    ...previous,
-    id: previous.id || WECHAT_CHANNEL_ID,
-    platform: "wechat",
-    name: previous.name || "微信个人号",
-    mode: "wechat_pc",
-    configFile: previous.configFile || DEFAULT_WECHAT_CONFIG,
-    enabled: !!enabled,
-  };
-  wechatHealthCache.at = 0;
-  wechatHealthCache.value = null;
-
-  if (enabled) {
-    try {
-      stopWechatChannel(next.id);
-      await launchWeChatLoginWindow();
-    }
-    catch (error) {
-      wechatLaunchState.lastError = error?.message ?? String(error);
-      throw error;
-    }
-  }
-  if (index >= 0) cfgs[index] = next;
-  else cfgs.push(next);
-  saveConfig(cfgs);
-  syncChannels();
-  log(`[微信开关] ${enabled ? "开启，等待扫码/登录" : "关闭"}`);
-  return getWechatControlStatus();
+  const result = await wechatController.toggle(enabled);
+  const status = await getWechatControlStatus();
+  log(`[微信开关] ${status.enabled ? "开启，等待扫码/登录" : "关闭"}`);
+  return { httpStatus: result.httpStatus, body: { ...status, ...result.body } };
 }
 function writeStatus() {
   const cfgs = loadConfig();
@@ -657,6 +650,8 @@ function writeStatus() {
 function syncChannels() {
   const cfgs = loadConfig();
   const byId = new Map(cfgs.map((c) => [c.id, c]));
+  const configuredWechat = cfgs.find((c) => c.mode === "wechat_pc");
+  if (!configuredWechat?.enabled) wechatRuntimeAllowed = false;
   for (const id of [...channels.keys()]) {
     const cfg = byId.get(id);
     if (!cfg || !cfg.enabled) disconnectChannel(id);
@@ -668,23 +663,85 @@ function syncChannels() {
   for (const id of [...wechatState.keys()]) {
     const cfg = byId.get(id);
     const current = wechatState.get(id)?.cfg;
-    if (!cfg || !cfg.enabled || cfg.mode !== "wechat_pc") stopWechatChannel(id);
+    if (!cfg || !cfg.enabled || cfg.mode !== "wechat_pc" || !wechatRuntimeAllowed) stopWechatChannel(id);
     else if ((cfg.configFile || DEFAULT_WECHAT_CONFIG) !== (current?.configFile || DEFAULT_WECHAT_CONFIG)) { stopWechatChannel(id); startWechatChannel(cfg); }
   }
-  for (const cfg of cfgs) if (cfg.enabled && cfg.mode === "wechat_pc" && !wechatState.has(cfg.id)) startWechatChannel(cfg);
+  for (const cfg of cfgs) if (cfg.enabled && cfg.mode === "wechat_pc" && wechatRuntimeAllowed && !wechatState.has(cfg.id)) startWechatChannel(cfg);
   log(`[sync] 已连接通道: ${[...channels.keys()].join(", ") || "(无)"}${dwsState.size ? " | dws: " + [...dwsState.keys()].join(", ") : ""}${wechatState.size ? " | wechat: " + [...wechatState.keys()].join(", ") : ""}`);
   writeStatus();
 }
 
+const wechatDiscovery = createWechatDiscovery();
+const wechatArtifactManager = createArtifactManager();
+const wechatConfirmationStore = createConfirmationStore();
+const wechatInstallManager = createWechatInstallManager({
+  discovery: wechatDiscovery,
+  artifact: wechatArtifactManager,
+  confirmationStore: wechatConfirmationStore,
+  runElevatedHelper: runElevatedWechatHelper,
+  verifySuppression: verifyWechatUpdateSuppression,
+});
+const wechatController = createWechatChannelController({
+  discovery: wechatDiscovery,
+  confirmationStore: wechatConfirmationStore,
+  installManager: wechatInstallManager,
+  readEnabled: async () => Boolean(getWechatConfigEntry()?.enabled),
+  persistEnabled: persistWechatEnabled,
+  stopChannel: async () => {
+    wechatRuntimeAllowed = false;
+    await stopWechatRuntime();
+  },
+  launchChannel: async (executable) => {
+    try {
+      await launchWeChatLoginWindow(executable);
+      wechatRuntimeAllowed = true;
+    }
+    catch (error) {
+      wechatLaunchState.lastError = error?.message ?? String(error);
+      throw error;
+    }
+  },
+});
+
 let reloadTimer;
 try {
-  fs.watch(CONFIG_FILE, () => { clearTimeout(reloadTimer); reloadTimer = setTimeout(() => { log("[配置变更]"); syncChannels(); }, 800); });
+  fs.watch(CONFIG_FILE, () => {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(async () => {
+      log("[配置变更]");
+      try {
+        const currentContent = fs.readFileSync(CONFIG_FILE, "utf8");
+        if (currentContent === lastHandledConfigContent) return;
+        lastHandledConfigContent = currentContent;
+        const result = await wechatController.reconcileStartup({ cancelPendingOnDisabled: true });
+        wechatRuntimeAllowed = Boolean(result.authorized);
+      } catch (error) {
+        wechatRuntimeAllowed = false;
+        await stopWechatRuntime();
+        log("[微信版本校验失败]", error?.message ?? error);
+      }
+      syncChannels();
+    }, 800);
+  });
 } catch (e) { log("[watch 配置失败]", e?.message ?? e); }
+const startupWechatResult = await wechatController.reconcileStartup();
+wechatRuntimeAllowed = Boolean(startupWechatResult.authorized);
+if (startupWechatResult.disabled) log("[微信版本校验] 当前版本不兼容或检测失败，启动时已关闭微信通道");
 syncChannels();
 
 // ---------- 管理 API（供 agent 直接增删，无需改文件） ----------
 const BRIDGE_PORT = Number(process.env.DSH_BRIDGE_PORT || 5175);
-function saveConfig(cfgs) { try { fs.writeFileSync(CONFIG_FILE, JSON.stringify({ channels: cfgs }, null, 2)); } catch (e) { log("[写配置失败]", e?.message ?? e); } }
+function saveConfig(cfgs) {
+  const content = JSON.stringify({ channels: cfgs }, null, 2);
+  try {
+    fs.writeFileSync(CONFIG_FILE, content);
+    lastHandledConfigContent = content;
+  }
+  catch (error) {
+    log("[写配置失败]", error?.message ?? error);
+    throw error;
+  }
+}
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -698,6 +755,20 @@ function readJsonBody(req) {
     });
     req.on("error", reject);
   });
+}
+function validateLocalJsonMutation(req, allowOrigin) {
+  const host = String(req.headers.host || "").toLowerCase();
+  const allowedHosts = new Set([`127.0.0.1:${BRIDGE_PORT}`, `localhost:${BRIDGE_PORT}`]);
+  if (!allowedHosts.has(host)) throw new WechatControlError("LOCAL_REQUEST_REQUIRED", "仅允许本机管理请求");
+  if (req.headers.origin && !allowOrigin) throw new WechatControlError("LOCAL_ORIGIN_REQUIRED", "请求来源不是本机页面");
+  if (!String(req.headers["content-type"] || "").toLowerCase().startsWith("application/json")) {
+    throw new WechatControlError("JSON_REQUIRED", "Content-Type 必须是 application/json");
+  }
+}
+function controlErrorStatus(error) {
+  if (["CONFIRMATION_INVALID", "CONFIRMATION_EXPIRED", "CONFIRMATION_STATE_CHANGED", "JSON_REQUIRED", "LOCAL_REQUEST_REQUIRED", "LOCAL_ORIGIN_REQUIRED"].includes(error?.code)) return 400;
+  if (error?.code === "INSTALL_ALREADY_RUNNING") return 409;
+  return 500;
 }
 const httpServer = http.createServer(async (req, res) => {
   const origin = req.headers.origin;
@@ -729,44 +800,61 @@ const httpServer = http.createServer(async (req, res) => {
   }
   if (req.method === "GET" && path === "/api/wechat/status") {
     try { return send(200, await getWechatControlStatus()); }
-    catch (error) { return send(500, { ok: false, error: error?.message ?? String(error) }); }
+    catch (error) { return send(500, { ok: false, code: error?.code || "WECHAT_STATUS_FAILED", error: error?.message ?? String(error) }); }
   }
   if (req.method === "POST" && path === "/api/wechat/toggle") {
     try {
+      validateLocalJsonMutation(req, allowOrigin);
       const body = await readJsonBody(req);
       if (typeof body.enabled !== "boolean") return send(400, { ok: false, error: "enabled 必须是布尔值" });
-      return send(200, await toggleWechatChannel(body.enabled));
+      const result = await toggleWechatChannel(body.enabled);
+      return send(result.httpStatus, result.body);
     } catch (error) {
-      return send(500, { ok: false, error: error?.message ?? String(error) });
+      return send(controlErrorStatus(error), { ok: false, code: error?.code || "WECHAT_TOGGLE_FAILED", error: error?.message ?? String(error), details: error?.details || {} });
+    }
+  }
+  if (req.method === "POST" && path === "/api/wechat/install") {
+    try {
+      validateLocalJsonMutation(req, allowOrigin);
+      const body = await readJsonBody(req);
+      if (typeof body.confirmationToken !== "string" || !body.confirmationToken) return send(400, { ok: false, code: "CONFIRMATION_REQUIRED", error: "缺少安装确认" });
+      const result = await wechatController.beginInstall(body.confirmationToken);
+      return send(result.httpStatus, result.body);
+    } catch (error) {
+      return send(controlErrorStatus(error), { ok: false, code: error?.code || "WECHAT_INSTALL_FAILED", error: error?.message ?? String(error), details: error?.details || {} });
     }
   }
   if (req.method === "POST" && path === "/api/channels") {
-    let body = ""; req.on("data", (d) => body += d); req.on("end", () => {
-      try {
-        const cfg = JSON.parse(body || "{}");
-        if (!cfg.id || (!["dws", "wechat_pc"].includes(cfg.mode) && (!cfg.appKey || !cfg.appSecret))) return send(400, { ok: false, error: "需要 id；stream 模式还需要 appKey/appSecret" });
-        const cfgs = loadConfig();
-        const idx = cfgs.findIndex((c) => c.id === cfg.id);
-        if (idx >= 0) cfgs[idx] = { ...cfgs[idx], ...cfg }; else cfgs.push(cfg);
-        saveConfig(cfgs);
-        setTimeout(() => { syncChannels(); }, 300);
-        log(`[管理API] 新增/更新通道 ${cfg.id}`);
-        send(200, { ok: true, id: cfg.id });
-      } catch (e) { send(400, { ok: false, error: e?.message ?? String(e) }); }
-    });
-    return;
+    try {
+      const cfg = await readJsonBody(req);
+      const cfgs = loadConfig();
+      const idx = cfgs.findIndex((c) => c.id === cfg.id);
+      const next = idx >= 0 ? { ...cfgs[idx], ...cfg } : cfg;
+      if (!next.id || (!["dws", "wechat_pc"].includes(next.mode) && (!next.appKey || !next.appSecret))) return send(400, { ok: false, error: "需要 id；stream 模式还需要 appKey/appSecret" });
+      if (next.mode === "wechat_pc" && next.enabled) {
+        return send(409, { ok: false, code: "WECHAT_TOGGLE_ENDPOINT_REQUIRED", error: "启用微信通道必须使用版本校验开关" });
+      }
+      if (idx >= 0) cfgs[idx] = next; else cfgs.push(next);
+      saveConfig(cfgs);
+      if (next.mode === "wechat_pc") await wechatController.toggle(false);
+      setTimeout(() => { syncChannels(); }, 300);
+      log(`[管理API] 新增/更新通道 ${next.id}`);
+      return send(200, { ok: true, id: next.id });
+    } catch (error) { return send(400, { ok: false, error: error?.message ?? String(error) }); }
   }
   if (req.method === "DELETE" && path.startsWith("/api/channels/")) {
-    const id = decodeURIComponent(path.slice("/api/channels/".length));
-    const cfgs = loadConfig().filter((c) => c.id !== id);
-    saveConfig(cfgs);
-    setTimeout(() => { syncChannels(); }, 300);
-    log(`[管理API] 删除通道 ${id}`);
-    return send(200, { ok: true, id });
+    try {
+      const id = decodeURIComponent(path.slice("/api/channels/".length));
+      const cfgs = loadConfig().filter((c) => c.id !== id);
+      saveConfig(cfgs);
+      setTimeout(() => { syncChannels(); }, 300);
+      log(`[管理API] 删除通道 ${id}`);
+      return send(200, { ok: true, id });
+    } catch (error) { return send(500, { ok: false, error: error?.message ?? String(error) }); }
   }
   send(404, { ok: false, error: "not found" });
 });
-httpServer.listen(BRIDGE_PORT, "127.0.0.1", () => log(`[管理API] http://127.0.0.1:${BRIDGE_PORT}/api/channels · /api/wechat/status · /api/wechat/toggle`));
+httpServer.listen(BRIDGE_PORT, "127.0.0.1", () => log(`[管理API] http://127.0.0.1:${BRIDGE_PORT}/api/channels · /api/wechat/status · /api/wechat/toggle · /api/wechat/install`));
 
 function shutdown() {
   for (const [, ch] of channels) try { ch.client.disconnect(); } catch {}

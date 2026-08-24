@@ -11,13 +11,14 @@
  */
 
 /**
- * @param {{ t: Function, readStatus: Function, readWechat: Function, toggleWechat: Function }} props
+ * @param {{ t: Function, readStatus: Function, readWechat: Function, toggleWechat: Function, installWechat: Function }} props
  */
-export default function ConnectionSection({ t, readStatus, readWechat, toggleWechat }) {
+export default function ConnectionSection({ t, readStatus, readWechat, toggleWechat, installWechat }) {
   const [items, setItems] = React.useState([]);
   const [wechat, setWechat] = React.useState({ supported: true, enabled: false, phase: "disabled" });
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [confirmation, setConfirmation] = React.useState(null);
   React.useEffect(() => {
     let alive = true;
     const load = async () => {
@@ -35,14 +36,32 @@ export default function ConnectionSection({ t, readStatus, readWechat, toggleWec
   const changeWechat = async () => {
     if (busy || wechat.supported === false) return;
     setBusy(true); setError("");
-    try { setWechat(await toggleWechat(!wechat.enabled)); }
+    try {
+      const next = await toggleWechat(!wechat.enabled);
+      setWechat(next);
+      if (next.code === "WECHAT_VERSION_REQUIRED") setConfirmation(next);
+    }
     catch (reason) { setError(reason?.message ?? String(reason)); }
     finally { setBusy(false); }
+  };
+  const confirmInstall = async () => {
+    if (!confirmation?.confirmationToken) return;
+    setBusy(true); setError("");
+    try {
+      setWechat(await installWechat(confirmation.confirmationToken));
+      setConfirmation(null);
+    } catch (reason) { setError(reason?.message ?? String(reason)); }
+    finally { setBusy(false); }
+  };
+  const cancelInstall = () => {
+    setConfirmation(null);
+    setError(t("wechat.riskWarning"));
   };
   const shown = items.filter((c) => c.status === "connected" && c.mode !== "wechat_pc");
   const rowStyle = { display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "14px", background: "var(--dsw-alias-bg-layer-1)", marginBottom: "12px" };
   const dot = () => <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-state-success-primary)", marginLeft: "8px" }} />;
-  const phaseText = wechat.phase === "connected" ? t("wechat.connected") : wechat.phase === "waiting_for_scan" ? t("wechat.waiting") : wechat.phase === "starting" ? t("wechat.starting") : t("wechat.disabled");
+  const installActive = ["downloading", "verifying", "requesting_admin", "installing", "verifying_install"].includes(wechat.phase);
+  const phaseText = installActive ? t(`wechat.${wechat.phase}`) : wechat.phase === "connected" ? t("wechat.connected") : wechat.phase === "waiting_for_scan" ? t("wechat.waiting") : wechat.phase === "starting" ? t("wechat.starting") : wechat.phase === "failed" ? t("wechat.failed") : t("wechat.disabled");
   const phaseColor = wechat.phase === "connected" ? "var(--dsw-alias-state-success-primary)" : wechat.enabled ? "var(--dsw-alias-state-warning-primary, #d97706)" : "var(--dsw-alias-label-tertiary)";
 
   return (
@@ -59,11 +78,23 @@ export default function ConnectionSection({ t, readStatus, readWechat, toggleWec
           </div>
           {(error || wechat.error) && <div role="alert" style={{ fontSize: "12px", color: "var(--dsw-alias-state-error-primary, #dc2626)", marginTop: "6px" }}>{error || wechat.error}</div>}
         </div>
-        <button type="button" role="switch" aria-label={t("wechat.aria")} aria-checked={!!wechat.enabled} disabled={busy || wechat.supported === false} onClick={changeWechat}
-          style={{ width: "44px", height: "24px", padding: "2px", border: 0, borderRadius: "999px", cursor: busy || wechat.supported === false ? "not-allowed" : "pointer", opacity: busy ? 0.65 : 1, background: wechat.enabled ? "var(--dsw-alias-brand-primary, #4f6ef7)" : "var(--dsw-alias-fill-secondary, #aeb4bf)" }}>
+        <button type="button" role="switch" aria-label={t("wechat.aria")} aria-checked={!!wechat.enabled} disabled={busy || installActive || wechat.supported === false} onClick={changeWechat}
+          style={{ width: "44px", height: "24px", padding: "2px", border: 0, borderRadius: "999px", cursor: busy || installActive || wechat.supported === false ? "not-allowed" : "pointer", opacity: busy || installActive ? 0.65 : 1, background: wechat.enabled ? "var(--dsw-alias-brand-primary, #4f6ef7)" : "var(--dsw-alias-fill-secondary, #aeb4bf)" }}>
           <span style={{ display: "block", width: "20px", height: "20px", borderRadius: "50%", background: "#fff", transform: wechat.enabled ? "translateX(20px)" : "translateX(0)", transition: "transform .18s ease", boxShadow: "0 1px 3px rgba(0,0,0,.25)" }} />
         </button>
       </div>
+      {confirmation && (
+        <div role="dialog" aria-modal="true" aria-label={t("wechat.versionTitle")} style={{ position: "fixed", inset: 0, zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(0,0,0,.45)" }}>
+          <div style={{ width: "min(440px, 100%)", padding: "22px", borderRadius: "14px", background: "var(--dsw-alias-bg-layer-1, #fff)", boxShadow: "0 18px 50px rgba(0,0,0,.25)" }}>
+            <h2 style={{ margin: "0 0 12px", fontSize: "17px" }}>{t("wechat.versionTitle")}</h2>
+            <p style={{ margin: "0 0 18px", fontSize: "14px", lineHeight: "22px" }}>{t("wechat.versionPrompt").replace("{current}", confirmation.installedVersion || t("wechat.notFound"))}</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button type="button" onClick={cancelInstall}>{t("wechat.cancelInstall")}</button>
+              <button type="button" disabled={busy} onClick={confirmInstall}>{t("wechat.installTarget")}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {shown.length === 0
         ? null
         : shown.map((c) => (

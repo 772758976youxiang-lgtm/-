@@ -52,6 +52,7 @@ DSH_CHANNEL_IM_TARGET_ROOTS=/path/to/deepseek-harness/node_modules/@deepseek-ai 
 | 9 | **微信通道位置** | 群聊通道在 Mac/Linux 上不存在 | 微信 Hook/UIA/OCR 只能在 **Windows**（小号+4.1.10.27+version.dll）；正式服务位于 `wechat_channel/`，旧 `examples/windows-gateway/gateway.py` 仅供演示兼容 |
 | 9a | **正式微信通道依赖** | `mode=wechat_pc` 启动后立即退出 | Windows 执行 `python -m pip install -r wechat_channel/requirements.txt`；再运行 `python -m wechat_channel diagnose --config wechat_channel/config.example.json` |
 | 9b | **微信发送降级** | Hook 可发但 UIA/OCR 不可用 | 打开并登录微信主聊天窗口、保持桌面解锁；正式发送依次走 Hook、UIA/OCR，全部失败才记为失败 |
+| 9c | **微信版本不符** | 打开通道时提示需要 4.1.10.27，开关保持关闭 | 其他版本可能增加兼容异常和封号风险。可取消并保持关闭，或确认后允许一次管理员授权；插件会临时下载、校验并安装 4.1.10.27，同时关闭自动更新。安装包不随插件分发。 |
 | 10 | **凭证安全** | 勿把 `~/.dsh-im-channels.json`、`.credentials.yaml`、`~/.dsh/settings.yaml` 提交/公开 | 仓库/插件零凭证；泄露则尽快去相应平台重置 |
 | 11 | **卸载残留** | 移除插件后旧配置仍在 | `dsh plugin --profile web uninstall/remove <pkg>`；再按需删 `~/.dsh-im-channels.json`、技能、预设、`~/.dsh-channel-im` |
 | 12 | **中文分支显示** | GitHub 显示默认分支为“掌握” | 那是 master 的中文翻译，别删别重建 |

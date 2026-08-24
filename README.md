@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.5）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.6）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -31,11 +31,13 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 
 源码直接运行 `server.mjs` 前先执行 `npm install --ignore-scripts`；`--ignore-scripts` 可避免开发依赖安装阶段重复应用运行包 overrides。
 
+v0.3.6 在打开微信通道前严格校验微信 `4.1.10.27`。版本不符时开关保持关闭并提示封号风险；用户确认后才从固定 HTTPS 链接临时下载安装包，校验大小、SHA-256 与腾讯数字签名，经一次 UAC 完成安装并关闭 `WeixinUpdate.exe` 自动更新。安装包不会内置或留存在插件中。
+
 v0.3.5 补齐 postinstall 承诺的 `~/.dsh-channel-im/auth.mjs`、`server.mjs` 与 `package-root.txt` 稳定入口，并修正 Windows `dws.exe` 探测；真人扫码不再依赖源码目录或不存在的 `install.sh`。v0.3.4 已在「设置 → 连接」增加微信个人号开关，并统一归一化 `文本/text/1` 等消息类型。
 
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
-微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。控制接口为 `GET /api/wechat/status` 与 `POST /api/wechat/toggle`。
+微信会综合运行进程、32/64 位卸载注册表和常见目录动态定位，因此换设备、盘符或安装目录也可使用；特殊布局仍可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。控制接口为 `GET /api/wechat/status`、`POST /api/wechat/toggle` 与确认后的 `POST /api/wechat/install`。
 
 ## 官方功能对齐（overrides）
 

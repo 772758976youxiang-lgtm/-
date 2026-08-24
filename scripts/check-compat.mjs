@@ -36,6 +36,9 @@ assert.match(client, /c\.mode === "wechat_pc"/);
 assert.match(client, /role:\s*"switch"/);
 assert.match(client, /"aria-checked"/);
 assert.match(client, /api\/wechat\/toggle/);
+assert.match(client, /api\/wechat\/install/);
+assert.match(client, /WECHAT_VERSION_REQUIRED/);
+assert.match(client, /4\.1\.10\.27/);
 
 const server = read("server.mjs");
 assert.match(server, /ensureConfigFile\(\)/);
@@ -47,7 +50,23 @@ assert.match(server, /closeExistingWeChatProcesses/);
 assert.match(server, /taskkill\.exe/);
 assert.match(server, /path === "\/api\/wechat\/status"/);
 assert.match(server, /path === "\/api\/wechat\/toggle"/);
+assert.match(server, /path === "\/api\/wechat\/install"/);
+assert.match(server, /createWechatChannelController/);
+assert.match(server, /wechatRuntimeAllowed/);
+assert.match(server, /WECHAT_TOGGLE_ENDPOINT_REQUIRED/);
+assert.doesNotMatch(server, /IMAGENAME eq WeChat\.exe/);
 assert.doesNotMatch(server, /\{\s*\.\.\.c,\s*status:/);
+
+for (const moduleFile of [
+  "wechat-version-policy.mjs",
+  "wechat-windows-discovery.mjs",
+  "wechat-installer-artifact.mjs",
+  "wechat-install-manager.mjs",
+  "wechat-channel-controller.mjs",
+]) {
+  assert.equal(pkg.files.includes(moduleFile), true, `${moduleFile} must be packed`);
+  assert.equal(fs.existsSync(path.join(root, moduleFile)), true);
+}
 
 const installer = read("scripts/install-assets.mjs");
 assert.match(installer, /discoverPackageDirs/);
