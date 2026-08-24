@@ -155,6 +155,7 @@ class WeChatChannelTests(unittest.TestCase):
     def test_session_and_send_tasks_persist(self):
         self.store.set_session("wechat:a:c", "session-1", {"a": 1})
         self.assertEqual(self.store.get_session("wechat:a:c"), "session-1")
+        self.assertEqual(self.store.get_session_metadata("wechat:a:c"), {"a": 1})
         task = SendTask("friend", "hello", "m1", "m1:reply")
         self.assertTrue(self.store.create_send_task(task.to_dict()))
         self.assertFalse(self.store.create_send_task(task.to_dict()))

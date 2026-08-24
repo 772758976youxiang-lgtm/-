@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url";
 const CONFIG_FILE = process.env.DSH_CHANNELS_FILE || path.join(os.homedir(), ".dsh-im-channels.json");
 const HOST = process.env.DSH_HOST || "http://127.0.0.1:3080";
 const CWD = process.env.DSH_CWD || path.join(os.homedir(), "DeepSeek");
-const AGENT_PRESET = process.env.DSH_AGENT_PRESET || "robot-assistant";
 const MAP_FILE = process.env.DSH_MAP_FILE || path.join(os.homedir(), ".dsh-im-bridge-map.json");
 const STATUS_FILE = process.env.DSH_STATUS_FILE || path.join(os.homedir(), ".dsh-im-channels-status.json");
 const DWS_BIN = process.env.DWS_BIN || path.join(os.homedir(), ".local", "bin", "dws");
@@ -22,6 +21,7 @@ const PYTHON_BIN = process.env.DSH_WECHAT_PYTHON || (process.platform === "win32
 const DEFAULT_WECHAT_CONFIG = process.env.DSH_WECHAT_CONFIG || path.join(os.homedir(), ".dsh-wechat-channel.json");
 const WECHAT_EXECUTABLE = process.env.DSH_WECHAT_EXECUTABLE || "";
 const WECHAT_CHANNEL_ID = "wechat-personal";
+const PRESET_ROOT = path.join(os.homedir(), ".dsh", ".agent-presets");
 
 const NOW = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => console.log(`[${NOW()}]`, ...a);
@@ -36,6 +36,47 @@ function ensureConfigFile() {
 }
 
 ensureConfigFile();
+
+// ---------- 通道专属 Agent 预设 ----------
+function channelPresetId(cfg) {
+  const safe = String(cfg?.id || "channel").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "channel";
+  return "channel-" + safe;
+}
+function yamlScalar(value) {
+  return JSON.stringify(String(value || ""));
+}
+function ensureChannelPreset(cfg) {
+  const preset = channelPresetId(cfg);
+  const directory = path.join(PRESET_ROOT, preset);
+  fs.mkdirSync(directory, { recursive: true });
+  const metadata = path.join(directory, "preset.yml");
+  const definition = path.join(directory, "agent.cordis.yml");
+  if (!fs.existsSync(metadata)) {
+    fs.writeFileSync(metadata, [
+      "name: " + yamlScalar((cfg?.name || cfg?.id || "通道") + " 通道"),
+      "description: " + yamlScalar("为通道「" + (cfg?.name || cfg?.id || "") + "」自动创建的独立空白预设。"),
+      "order: 100",
+      "",
+    ].join("\n"));
+  }
+  if (!fs.existsSync(definition)) {
+    // An empty Cordis component list deliberately leaves persona and tool calls blank.
+    fs.writeFileSync(definition, "# 通道专属预设：人设与工具调用暂为空白。\n[]\n");
+  }
+  return preset;
+}
+function ensureWechatPresetConfig(cfg) {
+  const preset = ensureChannelPreset(cfg);
+  const configFile = cfg.configFile || DEFAULT_WECHAT_CONFIG;
+  let custom = {};
+  try { custom = JSON.parse(fs.readFileSync(configFile, "utf8")); } catch {}
+  if (custom?.agent?.preset === preset) return preset;
+  custom.agent = { ...(custom.agent || {}), preset };
+  fs.mkdirSync(path.dirname(configFile), { recursive: true });
+  fs.writeFileSync(configFile, JSON.stringify(custom, null, 2));
+  log(`[通道预设] ${cfg.id} -> ${preset}`);
+  return preset;
+}
 
 // ---------- 会话映射（externalId -> sessionId，全局共享） ----------
 let sessionMap = {};
@@ -95,13 +136,18 @@ async function ensureWorkspace(cfg) {
   return wsId;
 }
 async function ensureSession(extKey, senderNick, cfg) {
-  const existing = sessionMap[extKey];
-  if (existing) {
+  const expectedPreset = ensureChannelPreset(cfg);
+  const mapped = sessionMap[extKey];
+  const existing = typeof mapped === "string" ? mapped : mapped?.sid;
+  const existingPreset = typeof mapped === "object" ? mapped?.preset : undefined;
+  if (existing && existingPreset === expectedPreset) {
     if (!(await isArchived(existing))) return { sid: existing, isNew: false };
     log(`[会话] ${existing} 已归档，消息将开启新会话`);
+  } else if (existing) {
+    log(`[会话] ${existing} 使用旧预设，后续消息将切换到 ${expectedPreset}`);
   }
-  const created = await api("session.create", { workspaceId: await ensureWorkspace(cfg), agentPreset: AGENT_PRESET });
-  sessionMap[extKey] = created.sessionId;
+  const created = await api("session.create", { workspaceId: await ensureWorkspace(cfg), agentPreset: expectedPreset });
+  sessionMap[extKey] = { sid: created.sessionId, preset: expectedPreset };
   watermark[created.sessionId] = 0;
   saveMap();
   log(`[会话] 新建 ${created.sessionId} <- ${extKey}`);
@@ -366,6 +412,7 @@ const wechatLaunchState = { launchedAt: 0, executable: "", lastError: "" };
 const wechatHealthCache = { url: "", at: 0, value: null, pending: null };
 function startWechatChannel(cfg) {
   if (wechatState.has(cfg.id)) return;
+  ensureWechatPresetConfig(cfg);
   const state = { cfg, child: null, connected: false, loggedIn: false, stopping: false, lastError: "", lastStderr: "" };
   const start = () => {
     const configFile = cfg.configFile || DEFAULT_WECHAT_CONFIG;
@@ -684,6 +731,7 @@ function writeStatus() {
 }
 function syncChannels() {
   const cfgs = loadConfig();
+  for (const cfg of cfgs) ensureChannelPreset(cfg);
   const byId = new Map(cfgs.map((c) => [c.id, c]));
   for (const id of [...channels.keys()]) {
     const cfg = byId.get(id);

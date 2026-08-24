@@ -98,7 +98,7 @@ Invoke-RestMethod -Method Post -ContentType application/json `
 
 ## AgentAdapter
 
-默认 `agent.adapter=dsh`，直接复用本机 DSH 的工作区、Session 和 `robot-assistant` 预设。也可改为：
+默认 `agent.adapter=dsh`，直接复用本机 DSH 的工作区与 Session；由桥接器为每个通道自动创建并指定独立预设（初始人设和工具调用均为空）。也可改为：
 
 - `echo`：独立验证微信收发；
 - `http`：调用 `/health`、`/sessions`、`/respond`；

@@ -31,7 +31,7 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 
 源码直接运行 `server.mjs` 前先执行 `npm install --ignore-scripts`；`--ignore-scripts` 可避免开发依赖安装阶段重复应用运行包 overrides。
 
-v0.3.10 将「设置 → 连接」的群聊与联系人规则面板改为 Harness 原生设置风格：统一的令牌色、圆角选择器、语义按钮和列表分隔。功能保持不变：群聊列表和联系人列表分开显示，每个群聊可单独启用“仅 @AI 回复”，通道后台固定保留最近 200 条上下文。
+v0.3.12 为每个通道自动创建并固定独立 Agent 预设；预设初始不含人设和工具调用，便于后续按通道扩展。已有通道在下一条新消息到达时自动迁移至其专属预设，并保留旧会话。并保留 Harness 原生风格的规则面板：群聊列表和联系人列表分开显示，每个群聊可单独启用“仅 @AI 回复”，通道后台固定保留最近 200 条上下文。
 
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 

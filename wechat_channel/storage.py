@@ -116,6 +116,17 @@ class StateStore:
             row = self._db.execute("SELECT session_id FROM sessions WHERE conversation_key=?", (conversation_key,)).fetchone()
         return str(row["session_id"]) if row else None
 
+    def get_session_metadata(self, conversation_key: str) -> Dict[str, Any]:
+        with self._lock:
+            row = self._db.execute("SELECT metadata_json FROM sessions WHERE conversation_key=?", (conversation_key,)).fetchone()
+        if not row:
+            return {}
+        try:
+            value = json.loads(row["metadata_json"])
+            return value if isinstance(value, dict) else {}
+        except (TypeError, json.JSONDecodeError):
+            return {}
+
     def set_session(self, conversation_key: str, session_id: str, metadata: Dict[str, Any]) -> None:
         now = self._now()
         with self._lock, self._db:

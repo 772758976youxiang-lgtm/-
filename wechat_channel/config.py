@@ -39,7 +39,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "token_env": "AGENT_TOKEN",
         "session_scope": "conversation",
         "workspace_dir": "",
-        "preset": "robot-assistant",
+        "preset": "channel-wechat-personal",
         "reply_timeout_seconds": 90,
     },
     "policy": {

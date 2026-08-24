@@ -107,7 +107,7 @@ class ProcessAgentAdapter(AgentAdapter):
 
 
 class DshAgentAdapter(AgentAdapter):
-    def __init__(self, endpoint: str, store: StateStore, workspace_dir: str = "", preset: str = "robot-assistant",
+    def __init__(self, endpoint: str, store: StateStore, workspace_dir: str = "", preset: str = "channel-wechat-personal",
                  timeout: float = 90):
         self.endpoint = endpoint.rstrip("/")
         self.store = store
@@ -164,7 +164,8 @@ class DshAgentAdapter(AgentAdapter):
     def get_or_create_session(self, conversation_key: str, metadata: Dict[str, Any]) -> str:
         existing = self.store.get_session(conversation_key)
         title = "微信·" + str(metadata.get("conversation_name") or metadata.get("conversation_id") or "会话")
-        if existing:
+        existing_preset = self.store.get_session_metadata(conversation_key).get("_agent_preset")
+        if existing and existing_preset == self.preset:
             # Contact/group remarks can become available after a session was first
             # created. Keep the existing Harness session aligned on every message.
             try:
@@ -172,9 +173,13 @@ class DshAgentAdapter(AgentAdapter):
             except Exception:
                 pass
             return existing
+        if existing:
+            # DSH locks a preset once a session has started. Preserve the old
+            # conversation and route future messages into the channel's fixed preset.
+            existing = None
         created = self._rpc("session.create", {"workspaceId": self._workspace(), "agentPreset": self.preset})
         session_id = str(created["sessionId"])
-        self.store.set_session(conversation_key, session_id, metadata)
+        self.store.set_session(conversation_key, session_id, {**metadata, "_agent_preset": self.preset})
         try:
             self._rpc("session.rename", {"sessionId": session_id, "title": title[:40]})
         except Exception:
@@ -252,5 +257,5 @@ def make_agent_adapter(config: Dict[str, Any], store: StateStore) -> AgentAdapte
         return ProcessAgentAdapter(settings.get("command") or [], timeout)
     if kind == "dsh":
         return DshAgentAdapter(str(settings["endpoint"]), store, str(settings.get("workspace_dir") or ""),
-                               str(settings.get("preset") or "robot-assistant"), timeout)
+                               str(settings.get("preset") or "channel-wechat-personal"), timeout)
     raise ValueError("unsupported agent adapter: " + kind)
