@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.9）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.10）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -31,7 +31,7 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 
 源码直接运行 `server.mjs` 前先执行 `npm install --ignore-scripts`；`--ignore-scripts` 可避免开发依赖安装阶段重复应用运行包 overrides。
 
-v0.3.9 在「设置 → 连接」加入可展开的“群聊与联系人规则”面板：群聊列表和联系人列表分开显示，可配置黑白名单；每个群聊可单独启用“仅 @AI 回复”。上下文不在设置面板展示，通道后台固定保留最近 200 条（包括不回复的群消息和引用消息）。会话标题优先使用联系人或群聊备注。
+v0.3.10 将「设置 → 连接」的群聊与联系人规则面板改为 Harness 原生设置风格：统一的令牌色、圆角选择器、语义按钮和列表分隔。功能保持不变：群聊列表和联系人列表分开显示，每个群聊可单独启用“仅 @AI 回复”，通道后台固定保留最近 200 条上下文。
 
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
