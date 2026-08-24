@@ -55,6 +55,9 @@ class ReceiveDriver(ABC):
     def mentions_self(self, content: str) -> bool:
         return False
 
+    def materialize_media(self, raw: RawMessage, save_dir: str) -> List[Dict[str, Any]]:
+        return []
+
 
 class SendDriver(ABC):
     name = "send"
@@ -87,6 +90,7 @@ class WeChatDbReceiveDriver(ReceiveDriver):
         self.message_limit = int(message_limit)
         self._db_factory = db_factory
         self._db = None
+        self._media = None
         self._lock = threading.RLock()
 
     def _database(self) -> Any:
@@ -168,7 +172,17 @@ class WeChatDbReceiveDriver(ReceiveDriver):
     def recover(self) -> DriverHealth:
         with self._lock:
             self._db = None
+            self._media = None
         return self.health()
+
+    def materialize_media(self, raw: RawMessage, save_dir: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            if self._media is None:
+                from .media import WeChatMediaReceiver
+
+                self._media = WeChatMediaReceiver(self._database(), save_dir)
+            receiver = self._media
+        return [receiver.materialize(raw.conversation_id, raw.local_id, raw.message_type)]
 
     def display_name(self, target_id: str) -> str:
         if target_id == "filehelper":

@@ -90,6 +90,8 @@ def normalize_message(raw: RawMessage) -> StandardMessage:
         sender_id, content = parse_group_content(raw.content, raw.sender_id)
     else:
         sender_id, content = raw.conversation_id, raw.content
+    if not str(content or "").strip() and str(raw.message_type or "").lower() not in ("text", "1", "文本", "文字", "文字消息"):
+        content = "[%s]" % (raw.message_type or "媒体")
     return StandardMessage(
         message_id="wechat:%s:%s:%s" % (raw.account_id, raw.conversation_id, raw.local_id),
         channel="wechat",
@@ -118,6 +120,7 @@ class WeChatChannelService:
         self._stop = threading.Event()
         self._poll_thread: Optional[threading.Thread] = None
         self._send_thread: Optional[threading.Thread] = None
+        self._agent_ready_thread: Optional[threading.Thread] = None
         self._started_at = 0
         self._last_poll_at = 0
         self._last_error: Optional[str] = None
@@ -138,8 +141,10 @@ class WeChatChannelService:
                                           item["idempotency_key"], int(item.get("attempts") or 0)))
         self._send_thread = threading.Thread(target=self._send_loop, name="wechat-send", daemon=True)
         self._poll_thread = threading.Thread(target=self._poll_loop, name="wechat-receive", daemon=True)
+        self._agent_ready_thread = threading.Thread(target=self._agent_ready_loop, name="wechat-agent-ready", daemon=True)
         self._send_thread.start()
         self._poll_thread.start()
+        self._agent_ready_thread.start()
         self.log("info", "service", "WeChat channel started")
 
     def stop(self) -> None:
@@ -149,7 +154,22 @@ class WeChatChannelService:
             self._poll_thread.join(timeout=5)
         if self._send_thread:
             self._send_thread.join(timeout=5)
+        if self._agent_ready_thread:
+            self._agent_ready_thread.join(timeout=5)
         self.log("info", "service", "WeChat channel stopped")
+
+    def _agent_ready_loop(self) -> None:
+        reported_error = False
+        while not self._stop.is_set():
+            try:
+                ready = self.agent.ensure_ready()
+                self.log("info", "agent", "agent workspace ready", ready)
+                return
+            except Exception as exc:
+                if not reported_error:
+                    self.log("warning", "agent", "agent workspace is not ready; retrying", {"error": str(exc)})
+                    reported_error = True
+                self._stop.wait(2)
 
     def _poll_loop(self) -> None:
         interval = max(0.25, int(self.config["channel"]["poll_interval_ms"]) / 1000.0)
@@ -197,10 +217,14 @@ class WeChatChannelService:
         if self.store.is_processed(message.message_id):
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
             return
-        if message.message_type.lower() not in ("text", "1", "文本", "文字", "文字消息") or not message.content.strip():
+        text_types = ("text", "1", "文本", "文字", "文字消息")
+        media_types = ("3", "image", "图片", "47", "emoji", "动画表情", "表情", "34", "voice", "语音",
+                       "43", "video", "视频", "49", "file", "文件", "文件/链接/卡片")
+        normalized_type = message.message_type.lower()
+        if normalized_type not in text_types + media_types or (normalized_type in text_types and not message.content.strip()):
             self._record_processed(message.message_id, message.conversation_id, message.to_dict())
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
-            self.log("debug", "unsupported_message", "ignored non-text or empty message", {"message_id": message.message_id, "message_type": message.message_type})
+            self.log("debug", "unsupported_message", "ignored unsupported or empty message", {"message_id": message.message_id, "message_type": message.message_type})
             return
         conversation_profile = self.receive.contact_profile(message.conversation_id)
         sender_profile = self.receive.contact_profile(message.sender_id)
@@ -219,6 +243,8 @@ class WeChatChannelService:
             "sender_remark": sender_profile.get("remark") or "",
             "sender_wechat_id": sender_profile.get("wechat_id") or "",
         }
+        if normalized_type in media_types:
+            metadata["media"] = self.receive.materialize_media(raw, str(self.config["state"].get("media_dir") or ""))
         quote = self._quote_context(message.content)
         if quote:
             metadata.update(quote)
@@ -232,7 +258,13 @@ class WeChatChannelService:
         if allowed and message.conversation_type == "group" and message.conversation_id in mention_groups and not mentioned:
             allowed, reason = False, "group message does not mention account"
         record = message.to_dict()
-        record["context"] = metadata
+        record_context = dict(metadata)
+        if metadata.get("media"):
+            record_context["media"] = [
+                {key: item.get(key) for key in ("kind", "source_type", "available", "attachable", "name", "media_type", "error")}
+                for item in metadata["media"]
+            ]
+        record["context"] = record_context
         record["reply_allowed"] = allowed
         record["policy_reason"] = reason
         record["mentioned"] = mentioned

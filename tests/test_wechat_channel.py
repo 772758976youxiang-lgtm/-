@@ -11,7 +11,8 @@ from wechat_channel.agents import DshAgentAdapter, EchoAgentAdapter
 from wechat_channel.config import DEFAULT_CONFIG, load_config
 from wechat_channel.drivers import SendDriver, SendRouter, WeChatDbReceiveDriver, parse_group_content
 from wechat_channel.http_api import ManagementServer
-from wechat_channel.models import DriverHealth, RawMessage, SendResult, SendTask, StandardMessage
+from wechat_channel.media import image_part_from_media
+from wechat_channel.models import AgentReply, DriverHealth, RawMessage, SendResult, SendTask, StandardMessage
 from wechat_channel.service import Policy, WeChatChannelService
 from wechat_channel.storage import StateStore
 
@@ -57,6 +58,15 @@ class FakeSendDriver(SendDriver):
         self.calls += 1
         ok = self.outcomes.pop(0) if self.outcomes else False
         return SendResult(ok, self.name, task.target_id, task.idempotency_key, None if ok else "failed")
+
+
+class CapturingAgent(EchoAgentAdapter):
+    def __init__(self):
+        self.metadata = None
+
+    def respond(self, session_id, message, metadata):
+        self.metadata = metadata
+        return AgentReply("received", session_id)
 
 
 class WeChatChannelTests(unittest.TestCase):
@@ -243,6 +253,55 @@ class WeChatChannelTests(unittest.TestCase):
         self.store.prune_recent_messages(200)
         records = self.store.recent_messages(500)
         self.assertEqual(len(records), 200)
+
+    def test_deleted_workspace_is_recreated_even_when_id_was_cached(self):
+        workspace_dir = str(Path(self.temp.name) / "wechat-workspace")
+        adapter = DshAgentAdapter("http://127.0.0.1:3080", self.store, workspace_dir=workspace_dir)
+        adapter._workspace_id = "deleted-workspace"
+        calls = []
+
+        def rpc(method, payload):
+            calls.append((method, payload))
+            if method == "workspace.list":
+                return {"items": []}
+            if method == "workspace.create":
+                return {"workspace": {"workspaceId": "new-workspace"}}
+            if method == "workspace.rename":
+                return {}
+            raise AssertionError(method)
+
+        adapter._rpc = rpc
+        ready = adapter.ensure_ready()
+        self.assertEqual(ready["workspace_id"], "new-workspace")
+        self.assertIn(("workspace.create", {"path": workspace_dir}), calls)
+
+    def test_image_message_reaches_agent_and_persists_safe_media_metadata(self):
+        db = FakeDb()
+        receive = WeChatDbReceiveDriver(self.store, db_factory=lambda **_: db)
+        receive.materialize_media = lambda _raw, _directory: [{
+            "kind": "image", "source_type": "图片", "available": False, "attachable": False,
+            "path": "C:/private/cache/image.dat", "name": "", "media_type": "",
+            "error": "图片事件已收到，但微信本地图片密钥或缓存尚不可用",
+        }]
+        agent = CapturingAgent()
+        service = WeChatChannelService(copy.deepcopy(DEFAULT_CONFIG), self.store, receive,
+                                       SendRouter([FakeSendDriver("send", [True])], 0), agent)
+        raw = RawMessage("account", "friend", "31", 1, "图片", "[图片]", 1, 31)
+        service._handle_raw(raw)
+        self.assertEqual(agent.metadata["media"][0]["kind"], "image")
+        self.assertEqual(service._send_queue.get_nowait().text, "received")
+        stored = self.store.recent_messages(1)[0]["message"]
+        self.assertNotIn("path", stored["context"]["media"][0])
+
+    def test_materialized_image_becomes_harness_image_content_part(self):
+        image_path = Path(self.temp.name) / "pixel.png"
+        image_path.write_bytes(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        )
+        part = image_part_from_media({"attachable": True, "path": str(image_path), "name": "pixel.png"})
+        self.assertEqual(part["type"], "image")
+        self.assertEqual(part["mediaType"], "image/png")
+        self.assertTrue(part["data"].startswith("iVBOR"))
 
 
 if __name__ == "__main__":

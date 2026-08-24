@@ -16,6 +16,9 @@ from .storage import StateStore
 
 
 class AgentAdapter(ABC):
+    def ensure_ready(self) -> Dict[str, Any]:
+        return self.health()
+
     @abstractmethod
     def health(self) -> Dict[str, Any]:
         raise NotImplementedError
@@ -116,6 +119,7 @@ class DshAgentAdapter(AgentAdapter):
         self.timeout = float(timeout)
         self._rpc_seq = 0
         self._workspace_id: Optional[str] = None
+        self._workspace_lock = threading.RLock()
         self._lock = threading.RLock()
         self._session_locks: Dict[str, threading.Lock] = {}
 
@@ -145,21 +149,25 @@ class DshAgentAdapter(AgentAdapter):
             return {"ok": False, "adapter": "dsh", "error": str(exc)}
 
     def _workspace(self) -> str:
-        if self._workspace_id:
+        with self._workspace_lock:
+            Path(self.workspace_dir).mkdir(parents=True, exist_ok=True)
+            value = self._rpc("workspace.list", {})
+            items = value.get("items") or []
+            found = next((item for item in items if str(item.get("path") or "") == self.workspace_dir), None)
+            if found:
+                self._workspace_id = str(found["workspaceId"])
+            else:
+                created = self._rpc("workspace.create", {"path": self.workspace_dir})
+                self._workspace_id = str(created["workspace"]["workspaceId"])
+            try:
+                self._rpc("workspace.rename", {"workspaceId": self._workspace_id, "title": "微信通道"})
+            except Exception:
+                pass
             return self._workspace_id
-        Path(self.workspace_dir).mkdir(parents=True, exist_ok=True)
-        value = self._rpc("workspace.list", {})
-        found = next((item for item in (value.get("items") or []) if item.get("path") == self.workspace_dir), None)
-        if found:
-            self._workspace_id = str(found["workspaceId"])
-        else:
-            created = self._rpc("workspace.create", {"path": self.workspace_dir})
-            self._workspace_id = str(created["workspace"]["workspaceId"])
-        try:
-            self._rpc("workspace.rename", {"workspaceId": self._workspace_id, "title": "微信通道"})
-        except Exception:
-            pass
-        return self._workspace_id
+
+    def ensure_ready(self) -> Dict[str, Any]:
+        workspace_id = self._workspace()
+        return {"ok": True, "adapter": "dsh", "workspace_id": workspace_id}
 
     def get_or_create_session(self, conversation_key: str, metadata: Dict[str, Any]) -> str:
         existing = self.store.get_session(conversation_key)
@@ -169,15 +177,22 @@ class DshAgentAdapter(AgentAdapter):
             # Contact/group remarks can become available after a session was first
             # created. Keep the existing Harness session aligned on every message.
             try:
+                self._rpc("session.history", {"sessionId": existing, "maxMessages": 1})
                 self._rpc("session.rename", {"sessionId": existing, "title": title[:40]})
+                return existing
             except Exception:
-                pass
-            return existing
+                existing = None
         if existing:
             # DSH locks a preset once a session has started. Preserve the old
             # conversation and route future messages into the channel's fixed preset.
             existing = None
-        created = self._rpc("session.create", {"workspaceId": self._workspace(), "agentPreset": self.preset})
+        try:
+            created = self._rpc("session.create", {"workspaceId": self._workspace(), "agentPreset": self.preset})
+        except Exception:
+            # A workspace can be removed from Harness after this service cached
+            # its ID. Refresh once and create the conversation in the new one.
+            self._workspace_id = None
+            created = self._rpc("session.create", {"workspaceId": self._workspace(), "agentPreset": self.preset})
         session_id = str(created["sessionId"])
         self.store.set_session(conversation_key, session_id, {**metadata, "_agent_preset": self.preset})
         try:
@@ -204,6 +219,7 @@ class DshAgentAdapter(AgentAdapter):
             "会话 ID：" + message.conversation_id,
             "发送者：" + str(metadata.get("sender_name") or message.sender_id),
             "发送者 ID：" + message.sender_id,
+            "消息类型：" + message.message_type,
         ]
         for label, key in (("会话备注", "conversation_remark"), ("会话微信号", "conversation_wechat_id"),
                            ("发送者备注", "sender_remark"), ("发送者微信号", "sender_wechat_id")):
@@ -217,6 +233,16 @@ class DshAgentAdapter(AgentAdapter):
         if metadata.get("quoted_message"):
             lines.append("引用消息发送者：" + str(metadata.get("quoted_sender") or "未知"))
             lines.append("引用的消息：" + str(metadata["quoted_message"]))
+        for item in metadata.get("media") or []:
+            label = {"image": "图片", "emoji": "表情", "voice": "语音", "video": "视频", "file": "文件"}.get(
+                str(item.get("kind") or ""), "媒体"
+            )
+            if item.get("attachable"):
+                lines.append("附件：已接收%s，图片内容随本条消息附上，可直接查看。" % label)
+            elif item.get("available"):
+                lines.append("附件：已接收%s（%s）；当前模型接口只直接附加图片。" % (label, item.get("name") or "本地文件"))
+            else:
+                lines.append("附件：%s" % (item.get("error") or (label + "事件已收到，但内容暂不可用")))
         return "\n".join(lines) + "\n【用户消息】\n" + message.content
 
     def respond(self, session_id: str, message: StandardMessage, metadata: Dict[str, Any]) -> AgentReply:
@@ -224,7 +250,14 @@ class DshAgentAdapter(AgentAdapter):
             session_lock = self._session_locks.setdefault(session_id, threading.Lock())
         with session_lock:
             baseline = self._history_max_seq(session_id)
-            self._rpc("session.prompt", {"sessionId": session_id, "mode": "queue", "content": [{"type": "text", "text": self._contextual_prompt(message, metadata)}]})
+            content: list[Dict[str, str]] = [{"type": "text", "text": self._contextual_prompt(message, metadata)}]
+            from .media import image_part_from_media
+
+            for item in metadata.get("media") or []:
+                part = image_part_from_media(item)
+                if part:
+                    content.append(part)
+            self._rpc("session.prompt", {"sessionId": session_id, "mode": "queue", "content": content})
             deadline = time.time() + self.timeout
             best = ""
             last_seq = baseline

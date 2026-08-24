@@ -54,7 +54,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "rate_limit_per_minute": 10,
         "enabled": True,
     },
-    "state": {"database": str(Path.home() / ".dsh-wechat-channel.sqlite3"), "recent_context_limit": 200},
+    "state": {
+        "database": str(Path.home() / ".dsh-wechat-channel.sqlite3"),
+        "recent_context_limit": 200,
+        "media_dir": str(Path.home() / ".dsh-wechat-media"),
+    },
     "runtime": {"echo": False},
 }
 

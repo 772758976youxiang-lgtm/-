@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.14）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.15）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -32,6 +32,8 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 源码直接运行 `server.mjs` 前先执行 `npm install --ignore-scripts`；`--ignore-scripts` 可避免开发依赖安装阶段重复应用运行包 overrides。
 
 v0.3.14 为每个通道自动创建并固定独立 Agent 预设，并只挂载机器人专用的自我设定工具。设定初始为空，机器人可在回复后把稳定的身份、人设、表达风格、职责、边界和偏好合并写入该通道预设的 `self-profile.md`；用户资料、聊天摘要、临时任务和记忆不会写入。已有空白通道预设会自动迁移，并保留旧会话。微信群聊中的脱敏提及 `@***` 会明确转换为“机器人被 @：是”。规则面板继续保持 Harness 原生风格：群聊列表和联系人列表分开显示，每个群聊可单独启用“仅 @AI 回复”，后台固定保留最近 200 条上下文。
+
+v0.3.15 在通道启动时主动校验微信工作区；用户从 Harness 删除工作区后会自动重建，已失效的会话映射也会自动换成新会话。图片、动画表情、语音、视频和文件事件不再被当成非文本丢弃；可取得的图片/表情会作为图片附件交给 Agent，暂时没有本地密钥或缓存的图片仍会作为明确的媒体事件进入上下文。
 
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
