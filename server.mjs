@@ -14,6 +14,7 @@ import { createWechatDiscovery } from "./wechat-windows-discovery.mjs";
 import { createArtifactManager } from "./wechat-installer-artifact.mjs";
 import { createWechatInstallManager, runElevatedWechatHelper, verifyWechatUpdateSuppression } from "./wechat-install-manager.mjs";
 import { createWechatChannelController } from "./wechat-channel-controller.mjs";
+import { createWechatPythonRuntime } from "./wechat-python-runtime.mjs";
 
 const CONFIG_FILE = process.env.DSH_CHANNELS_FILE || path.join(os.homedir(), ".dsh-im-channels.json");
 const HOST = process.env.DSH_HOST || "http://127.0.0.1:3080";
@@ -373,7 +374,16 @@ let wechatRuntimeAllowed = false;
 function startWechatChannel(cfg) {
   if (wechatState.has(cfg.id)) return;
   const state = { cfg, child: null, connected: false, loggedIn: false, stopping: false, lastError: "", lastStderr: "" };
-  const start = () => {
+  const start = async () => {
+    try {
+      await wechatPythonRuntime.ensure();
+    } catch (error) {
+      if (state.stopping || !wechatState.has(cfg.id)) return;
+      state.lastError = error?.message ?? String(error);
+      log(`[微信 ${cfg.id}] 启动失败: ${state.lastError}`);
+      writeStatus();
+      return;
+    }
     const configFile = cfg.configFile || DEFAULT_WECHAT_CONFIG;
     const args = ["-m", "wechat_channel", "run"];
     if (fs.existsSync(configFile)) args.push("--config", configFile);
@@ -411,11 +421,11 @@ function startWechatChannel(cfg) {
       if (!state.stopping && code !== 0) state.lastError = state.lastStderr || `微信通道进程退出 code=${code}`;
       writeStatus();
       log(`[微信 ${cfg.id}] 退出 code=${code}${state.stopping ? "" : "，3s 后重启"}`);
-      if (!state.stopping && wechatState.has(cfg.id)) setTimeout(start, 3000);
+      if (!state.stopping && wechatState.has(cfg.id)) setTimeout(() => { void start(); }, 3000);
     });
   };
   wechatState.set(cfg.id, state);
-  start();
+  void start();
 }
 function stopWechatChannel(id) {
   const state = wechatState.get(id);
@@ -451,6 +461,12 @@ async function isWeChatProcessRunning() {
   const result = await capture("tasklist.exe", ["/FI", "IMAGENAME eq Weixin.exe", "/FI", "STATUS eq RUNNING", "/FO", "CSV", "/NH"]);
   return /Weixin\.exe/i.test(result.stdout);
 }
+
+const wechatPythonRuntime = createWechatPythonRuntime({
+  pythonBin: PYTHON_BIN,
+  requirementsFile: path.join(PLUGIN_ROOT, "wechat_channel", "requirements.txt"),
+  run: (command, args) => capture(command, args, args[1] === "pip" ? 180000 : 10000),
+});
 
 async function closeExistingWeChatProcesses() {
   if (process.platform !== "win32") return;

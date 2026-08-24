@@ -31,11 +31,12 @@
     "wechat-windows-discovery.mjs",
     "wechat-installer-artifact.mjs",
     "wechat-install-manager.mjs",
-    "wechat-channel-controller.mjs"
+    "wechat-channel-controller.mjs",
+    "wechat-python-runtime.mjs"
   ],
   "scripts": {
     "postinstall": "node scripts/install-assets.mjs",
-    "test": "node --check lib/index.js && node --check lib/client.js && node --check server.mjs && node --check scripts/install-assets.mjs && node --test scripts/wechat-version-policy.test.mjs scripts/wechat-windows-discovery.test.mjs scripts/wechat-installer-artifact.test.mjs scripts/wechat-install-manager.test.mjs scripts/wechat-install-helper.test.mjs scripts/wechat-channel-controller.test.mjs scripts/wechat-ui-contract.test.mjs scripts/install-utils.test.mjs && node scripts/check-compat.mjs && node scripts/run-python-tests.mjs",
+    "test": "node --check lib/index.js && node --check lib/client.js && node --check server.mjs && node --check scripts/install-assets.mjs && node --check wechat-python-runtime.mjs && node --test scripts/wechat-version-policy.test.mjs scripts/wechat-windows-discovery.test.mjs scripts/wechat-installer-artifact.test.mjs scripts/wechat-install-manager.test.mjs scripts/wechat-install-helper.test.mjs scripts/wechat-channel-controller.test.mjs scripts/wechat-ui-contract.test.mjs scripts/wechat-python-runtime.test.mjs scripts/install-utils.test.mjs && node scripts/check-compat.mjs && node scripts/run-python-tests.mjs",
     "test:wechat": "node scripts/run-python-tests.mjs",
     "verify:install": "node scripts/verify-overrides.mjs",
     "prepack": "npm test && node scripts/clean-python-cache.mjs"
