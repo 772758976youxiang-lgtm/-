@@ -15,6 +15,7 @@ import { createArtifactManager } from "./wechat-installer-artifact.mjs";
 import { createWechatInstallManager, runElevatedWechatHelper, verifyWechatUpdateSuppression } from "./wechat-install-manager.mjs";
 import { createWechatChannelController } from "./wechat-channel-controller.mjs";
 import { createWechatPythonRuntime } from "./wechat-python-runtime.mjs";
+import { createWechatLoginLauncher } from "./wechat-login-launcher.mjs";
 
 const CONFIG_FILE = process.env.DSH_CHANNELS_FILE || path.join(os.homedir(), ".dsh-im-channels.json");
 const HOST = process.env.DSH_HOST || "http://127.0.0.1:3080";
@@ -468,29 +469,15 @@ const wechatPythonRuntime = createWechatPythonRuntime({
   run: (command, args) => capture(command, args, args[1] === "pip" ? 180000 : 10000),
 });
 
-async function closeExistingWeChatProcesses() {
-  if (process.platform !== "win32") return;
-  const result = await capture("taskkill.exe", ["/IM", "Weixin.exe", "/T", "/F"], 10000);
-  if (result.code === 0) log("[微信登录] 已关闭旧进程 Weixin.exe");
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    if (!(await isWeChatProcessRunning())) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error("旧微信进程未能在 10 秒内退出，请手动关闭后重试");
-}
+const wechatLoginLauncher = createWechatLoginLauncher({ spawnProcess: spawn });
 
 async function launchWeChatLoginWindow(executable) {
-  if (process.platform !== "win32") throw new Error("微信个人号通道仅支持 Windows");
-  if (!executable || path.win32.basename(executable).toLowerCase() !== "weixin.exe") throw new Error("未找到已校验的微信 4.x 客户端");
-  await closeExistingWeChatProcesses();
-  const child = spawn(executable, [], { detached: true, stdio: "ignore", windowsHide: false, shell: false });
-  child.unref();
+  const launched = wechatLoginLauncher.launch(executable);
   wechatLaunchState.launchedAt = Date.now();
-  wechatLaunchState.executable = executable;
+  wechatLaunchState.executable = launched;
   wechatLaunchState.lastError = "";
-  log(`[微信登录] 已拉起 ${executable}`);
-  return executable;
+  log(`[微信登录] 已拉起新的微信实例 ${launched}`);
+  return launched;
 }
 
 function wechatManagementUrl(cfg) {
