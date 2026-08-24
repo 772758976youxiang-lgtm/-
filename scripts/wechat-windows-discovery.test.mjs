@@ -87,6 +87,7 @@ test("collects normalized process and registry candidates through explicit regis
   assert.match(invocation.args[3], /\[Console\]::OutputEncoding = \[System\.Text\.UTF8Encoding\]::new\(\$false\)/);
   for (const marker of [
     "OpenBaseKey",
+    "ErrorAction Stop",
     "Registry32",
     "Registry64",
     "Is64BitOperatingSystem",
@@ -94,9 +95,13 @@ test("collects normalized process and registry candidates through explicit regis
     "LocalMachine",
     "InstallLocation",
     "DisplayIcon",
+    "UnauthorizedAccessException",
+    "SecurityException",
+    "WECHAT_DISCOVERY_QUERY_FAILED",
   ]) {
     assert.equal(invocation.args[3].includes(marker), true, marker);
   }
+  assert.equal(invocation.args[3].includes("SilentlyContinue"), false);
 });
 
 test("PowerShell 5.1 collector smoke test is read-only", { skip: process.platform !== "win32" }, async () => {
@@ -174,7 +179,7 @@ test("kills PowerShell when combined stdout and stderr exceed the cap", async ()
 test("maps collector and metadata operational failures to stable codes", async () => {
   await assert.rejects(
     collectDefaultCandidates({ env: {}, runPowerShell: async () => { throw new Error("collector failed"); } }),
-    { code: "WECHAT_DISCOVERY_COLLECT_FAILED" },
+    { code: "WECHAT_DISCOVERY_FAILED", details: { stage: "collector", causeCode: "UNKNOWN" } },
   );
   await assert.rejects(
     readDefaultMetadata("D:\\Weixin\\Weixin.exe", { runPowerShell: async () => { throw new Error("metadata failed"); } }),
@@ -185,7 +190,7 @@ test("maps collector and metadata operational failures to stable codes", async (
       platform: "win32",
       collectCandidates: async () => { throw new Error("injected collector failed"); },
     }).discover(),
-    { code: "WECHAT_DISCOVERY_COLLECT_FAILED" },
+    { code: "WECHAT_DISCOVERY_FAILED", details: { stage: "collector", causeCode: "UNKNOWN" } },
   );
   await assert.rejects(
     discovery(
@@ -193,7 +198,7 @@ test("maps collector and metadata operational failures to stable codes", async (
       "",
       { readMetadata: async () => { throw new Error("injected metadata failed"); } },
     ).discover(),
-    { code: "WECHAT_DISCOVERY_METADATA_FAILED" },
+    { code: "WECHAT_DISCOVERY_FAILED", details: { stage: "metadata", causeCode: "UNKNOWN" } },
   );
 });
 
@@ -205,6 +210,70 @@ test("skips candidates that disappear before identity validation", async () => {
     { realpath: async () => { throw missing; }, readMetadata: async () => assert.fail("metadata should not run") },
   ).discover();
   assert.equal(result, null);
+});
+
+test("rejects realpath EACCES with stable sanitized discovery details", async () => {
+  const denied = Object.assign(new Error("sensitive path must not leak"), { code: "EACCES" });
+  await assert.rejects(
+    discovery(
+      [{ path: "D:\\Denied\\Weixin.exe", source: "process", confidence: 30 }],
+      "",
+      { realpath: async () => { throw denied; } },
+    ).discover(),
+    (error) => {
+      assert.equal(error.code, "WECHAT_DISCOVERY_FAILED");
+      assert.deepEqual(error.details, { stage: "realpath", causeCode: "EACCES" });
+      assert.equal(JSON.stringify(error.details).includes("sensitive"), false);
+      return true;
+    },
+  );
+});
+
+test("rejects stat EPERM with stable sanitized discovery details", async () => {
+  const denied = Object.assign(new Error("private filename"), { code: "EPERM" });
+  await assert.rejects(
+    discovery(
+      [{ path: "D:\\Denied\\Weixin.exe", source: "process", confidence: 30 }],
+      "",
+      { stat: async () => { throw denied; } },
+    ).discover(),
+    { code: "WECHAT_DISCOVERY_FAILED", details: { stage: "stat", causeCode: "EPERM" } },
+  );
+});
+
+test("rejects malformed stat responses instead of treating them as candidates", async () => {
+  for (const malformed of [{}, { isFile: () => "yes" }]) {
+    await assert.rejects(
+      discovery(
+        [{ path: "D:\\Malformed\\Weixin.exe", source: "process", confidence: 30 }],
+        "",
+        { stat: async () => malformed },
+      ).discover(),
+      { code: "WECHAT_DISCOVERY_FAILED", details: { stage: "stat", causeCode: "INVALID_STAT" } },
+    );
+  }
+});
+
+test("does not select a lower-confidence candidate after a higher-confidence operational failure", async () => {
+  const high = "D:\\High\\Weixin.exe";
+  const low = "D:\\Low\\Weixin.exe";
+  let metadataCalls = 0;
+  const denied = Object.assign(new Error("denied"), { code: "EACCES" });
+  await assert.rejects(
+    discovery(
+      [
+        { path: high, source: "process", confidence: 30 },
+        { path: low, source: "registry", confidence: 20 },
+      ],
+      "",
+      {
+        realpath: async (value) => { if (value === high) throw denied; return value; },
+        readMetadata: async () => { metadataCalls += 1; return { version: "4.1.10.27", productName: "Weixin" }; },
+      },
+    ).discover(),
+    { code: "WECHAT_DISCOVERY_FAILED", details: { stage: "realpath", causeCode: "EACCES" } },
+  );
+  assert.equal(metadataCalls, 0);
 });
 
 test("finds Weixin 4.x on a custom drive and excludes WeChat 3.x and WXWork", async () => {

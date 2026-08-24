@@ -5,53 +5,63 @@ import { WechatControlError } from "./wechat-version-policy.mjs";
 
 const collectPowerShell = String.raw`
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$ErrorActionPreference = 'Stop'
 $items = @()
-Get-CimInstance Win32_Process -Filter "Name='Weixin.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
-  if ($_.ExecutablePath) { $items += [pscustomobject]@{ path=$_.ExecutablePath; source='process'; confidence=30 } }
-}
-$views = @([Microsoft.Win32.RegistryView]::Registry32)
-if ([Environment]::Is64BitOperatingSystem) {
-  $views += [Microsoft.Win32.RegistryView]::Registry64
-}
-$hives = @(
-  [Microsoft.Win32.RegistryHive]::CurrentUser,
-  [Microsoft.Win32.RegistryHive]::LocalMachine
-)
-foreach ($hive in $hives) {
-  foreach ($view in $views) {
-    $baseKey = $null
-    $uninstallKey = $null
-    try {
-      $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
-      $uninstallKey = $baseKey.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall')
-      if (-not $uninstallKey) { continue }
-      foreach ($subKeyName in $uninstallKey.GetSubKeyNames()) {
-        $subKey = $null
-        try {
-          $subKey = $uninstallKey.OpenSubKey($subKeyName)
-          if (-not $subKey) { continue }
-          $displayName = [string]$subKey.GetValue('DisplayName')
-          if ($displayName -match '微信|Weixin|WeChat') {
-            $items += [pscustomobject]@{
-              installLocation = [string]$subKey.GetValue('InstallLocation', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-              displayIcon = [string]$subKey.GetValue('DisplayIcon', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-              source = 'registry'
-              confidence = 20
+try {
+  Get-CimInstance Win32_Process -Filter "Name='Weixin.exe'" -ErrorAction Stop | ForEach-Object {
+    if ($_.ExecutablePath) { $items += [pscustomobject]@{ path=$_.ExecutablePath; source='process'; confidence=30 } }
+  }
+  $views = @([Microsoft.Win32.RegistryView]::Registry32)
+  if ([Environment]::Is64BitOperatingSystem) {
+    $views += [Microsoft.Win32.RegistryView]::Registry64
+  }
+  $hives = @(
+    [Microsoft.Win32.RegistryHive]::CurrentUser,
+    [Microsoft.Win32.RegistryHive]::LocalMachine
+  )
+  foreach ($hive in $hives) {
+    foreach ($view in $views) {
+      $baseKey = $null
+      $uninstallKey = $null
+      try {
+        $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+        $uninstallKey = $baseKey.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall')
+        if (-not $uninstallKey) { continue }
+        foreach ($subKeyName in $uninstallKey.GetSubKeyNames()) {
+          $subKey = $null
+          try {
+            $subKey = $uninstallKey.OpenSubKey($subKeyName)
+            if (-not $subKey) { continue }
+            $displayName = [string]$subKey.GetValue('DisplayName')
+            if ($displayName -match '微信|Weixin|WeChat') {
+              $items += [pscustomobject]@{
+                installLocation = [string]$subKey.GetValue('InstallLocation', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                displayIcon = [string]$subKey.GetValue('DisplayIcon', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                source = 'registry'
+                confidence = 20
+              }
             }
+          } finally {
+            if ($subKey) { $subKey.Dispose() }
           }
-        } catch {
-        } finally {
-          if ($subKey) { $subKey.Dispose() }
         }
+      } finally {
+        if ($uninstallKey) { $uninstallKey.Dispose() }
+        if ($baseKey) { $baseKey.Dispose() }
       }
-    } catch {
-    } finally {
-      if ($uninstallKey) { $uninstallKey.Dispose() }
-      if ($baseKey) { $baseKey.Dispose() }
     }
   }
+  $items | ConvertTo-Json -Compress
+} catch [System.UnauthorizedAccessException] {
+  [Console]::Error.WriteLine('WECHAT_DISCOVERY_ACCESS_DENIED')
+  exit 1
+} catch [System.Security.SecurityException] {
+  [Console]::Error.WriteLine('WECHAT_DISCOVERY_SECURITY_FAILED')
+  exit 1
+} catch {
+  [Console]::Error.WriteLine('WECHAT_DISCOVERY_QUERY_FAILED')
+  exit 1
 }
-$items | ConvertTo-Json -Compress
 `;
 
 const metadataScript = String.raw`
@@ -163,6 +173,19 @@ function wrapOperationalError(code, message, error) {
   });
 }
 
+const expectedMissingCodes = new Set(["ENOENT", "ENOTDIR"]);
+
+function discoveryFailure(stage, error, fallbackCode = "UNKNOWN") {
+  if (error instanceof WechatControlError && error.code === "WECHAT_DISCOVERY_FAILED") return error;
+  const value = String(error?.code || fallbackCode);
+  const causeCode = /^[A-Z0-9_]+$/.test(value) ? value : fallbackCode;
+  return new WechatControlError("WECHAT_DISCOVERY_FAILED", "微信安装发现失败", { stage, causeCode });
+}
+
+function isExpectedMissing(error) {
+  return expectedMissingCodes.has(error?.code);
+}
+
 function stripBalancedSurroundingQuotes(value) {
   const trimmed = String(value || "").trim();
   const quote = trimmed[0];
@@ -223,7 +246,7 @@ export async function collectDefaultCandidates({
     }
     return candidates;
   } catch (error) {
-    throw wrapOperationalError("WECHAT_DISCOVERY_COLLECT_FAILED", "无法收集微信安装候选", error);
+    throw discoveryFailure("collector", error);
   }
 }
 
@@ -268,36 +291,51 @@ export function createWechatDiscovery({
     try {
       raw = [...await collectCandidates({ timeoutMs: powerShellTimeoutMs, maxOutputBytes: maxPowerShellOutputBytes })];
     } catch (error) {
-      throw wrapOperationalError("WECHAT_DISCOVERY_COLLECT_FAILED", "无法收集微信安装候选", error);
+      throw discoveryFailure("collector", error);
     }
     if (explicitExecutable) raw.unshift({ path: explicitExecutable, source: "explicit", confidence: 40 });
     const resolved = new Map();
     for (const item of raw) {
+      let executable;
       try {
-        const executable = await realpath(item.path);
-        if (!path.win32.isAbsolute(executable)) continue;
-        if (path.win32.basename(executable).toLowerCase() !== "weixin.exe") continue;
-        const key = path.win32.normalize(executable).toLowerCase();
-        const existing = resolved.get(key);
-        const sources = existing?.sources || [];
-        if (item.source && !sources.includes(item.source)) sources.push(item.source);
-        if (!existing || item.confidence > existing.confidence) {
-          resolved.set(key, {
-            ...item,
-            executable,
-            installRoot: path.win32.dirname(executable),
-            sources,
-          });
-        }
-      } catch {}
+        executable = await realpath(item.path);
+      } catch (error) {
+        if (isExpectedMissing(error)) continue;
+        throw discoveryFailure("realpath", error);
+      }
+      if (typeof executable !== "string" || !path.win32.isAbsolute(executable)) continue;
+      if (path.win32.basename(executable).toLowerCase() !== "weixin.exe") continue;
+      const key = path.win32.normalize(executable).toLowerCase();
+      const existing = resolved.get(key);
+      const sources = existing?.sources || [];
+      if (item.source && !sources.includes(item.source)) sources.push(item.source);
+      if (!existing || item.confidence > existing.confidence) {
+        resolved.set(key, {
+          ...item,
+          executable,
+          installRoot: path.win32.dirname(executable),
+          sources,
+        });
+      }
     }
     const valid = [];
     for (const item of resolved.values()) {
       let file;
       try {
         file = await stat(item.executable);
-      } catch {}
-      if (!file?.isFile()) continue;
+      } catch (error) {
+        if (isExpectedMissing(error)) continue;
+        throw discoveryFailure("stat", error);
+      }
+      if (typeof file?.isFile !== "function") throw discoveryFailure("stat", null, "INVALID_STAT");
+      let isFile;
+      try {
+        isFile = file.isFile();
+      } catch (error) {
+        throw discoveryFailure("stat", error);
+      }
+      if (typeof isFile !== "boolean") throw discoveryFailure("stat", null, "INVALID_STAT");
+      if (!isFile) continue;
       let info;
       try {
         info = await readMetadata(item.executable, {
@@ -305,8 +343,8 @@ export function createWechatDiscovery({
           maxOutputBytes: maxPowerShellOutputBytes,
         });
       } catch (error) {
-        if (error?.code === "ENOENT" || error?.code === "ENOTDIR") continue;
-        throw wrapOperationalError("WECHAT_DISCOVERY_METADATA_FAILED", "无法读取微信文件元数据", error);
+        if (isExpectedMissing(error)) continue;
+        throw discoveryFailure("metadata", error);
       }
       if (!info || !/^4\.\d+\.\d+\.\d+$/.test(String(info.version)) || !isAllowedProductName(info.productName)) continue;
       valid.push({ ...item, version: info.version, productName: info.productName });
