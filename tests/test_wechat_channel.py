@@ -182,15 +182,28 @@ class WeChatChannelTests(unittest.TestCase):
         self.assertEqual(task.mention_ids, ["member"])
         self.assertEqual(task.mention_names, ["member"])
 
-    def test_mention_task_never_falls_back_to_uia(self):
+    def test_mention_task_falls_back_to_bound_uia_native_mention(self):
         hook = FakeSendDriver("aixed_hook", [False])
         gui = FakeSendDriver("wechatauto_uia_ocr", [True])
         result = SendRouter([hook, gui], max_retries=0, retry_delay=0).send(
             SendTask("group@chatroom", "hello", "m1", "m1:reply", mention_ids=["member"])
         )
-        self.assertFalse(result.ok)
+        self.assertTrue(result.ok)
         self.assertEqual(hook.calls, 1)
-        self.assertEqual(gui.calls, 0)
+        self.assertEqual(gui.calls, 1)
+
+    def test_uia_driver_uses_at_member_for_group_mentions(self):
+        calls = []
+
+        class Gui:
+            def at_member(self, member, text, who=None, verify=False):
+                calls.append((member, text, who, verify))
+                return type("Response", (), {"ok": True, "is_success": True})()
+
+        driver = UiaOcrSendDriver(lambda _target: "测试群", gui_factory=Gui, verify=True, hwnd=88)
+        result = driver.send(SendTask("group@chatroom", "你好", "m", "m:r", mention_ids=["wxid_member"], mention_names=["张三"]))
+        self.assertTrue(result.ok)
+        self.assertEqual(calls, [("张三", "你好", "测试群", True)])
 
     def test_hook_driver_posts_group_mention_endpoint_with_visible_prefix(self):
         requests = []

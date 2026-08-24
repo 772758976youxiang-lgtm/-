@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.5.2）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.5.3）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -63,6 +63,8 @@ v0.5.0 将微信接入改为完全隔离的多机器人流程。Harness 不再�
 v0.5.1 收紧微信窗口识别：仅接受 `Weixin.exe` / `WeChat.exe` 进程或精确微信窗口标题，避免把路径或标题含 `wechat` 的其他应用误绑为新机器人窗口。
 
 v0.5.2 将每分钟进度回报补齐为 Harness 原生 plugin notice 结构（含稳定消息 ID、来源和摘要），确保进度消息能在发起搭建的原会话中稳定唤醒 Agent 并直接汇报。
+
+v0.5.3 补齐多机器人的群聊原生 @ 发送：Hook 可用时继续后台写入 `atlist`；独立机器人不共用全局 Hook 时，使用已绑定窗口的 `WeChatGUI.at_member` 选择群成员并发送，不再因禁止普通文本降级而导致整条群回复失败。
 
 在普通 Harness 会话中说“帮我搭建微信通道”，Agent 会调用工具完成本机检查、依赖补齐和启动。实现细节见 [`wechat_channel/README.md`](wechat_channel/README.md)，真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 

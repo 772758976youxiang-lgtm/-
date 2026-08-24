@@ -337,7 +337,10 @@ class UiaOcrSendDriver(SendDriver):
         target = "文件传输助手" if task.target_id in ("self", "filehelper") else self.target_resolver(task.target_id)
         with self._lock:
             try:
-                response = self._client().send_msg(task.text, who=target, verify=self.verify)
+                if task.mention_names and task.target_id.endswith("@chatroom"):
+                    response = self._client().at_member(task.mention_names[0], task.text, who=target, verify=self.verify)
+                else:
+                    response = self._client().send_msg(task.text, who=target, verify=self.verify)
                 if isinstance(response, dict):
                     ok = response.get("status") in ("成功", "success", "ok")
                     message = response.get("message")
@@ -369,10 +372,9 @@ class SendRouter:
         errors = []
         for round_number in range(self.max_retries + 1):
             for driver in self.drivers:
-                # Native mention metadata cannot be recreated by UIA/OCR.  Do
-                # not open or focus WeChat and silently downgrade a real @ to
-                # plain text when the local Hook endpoint is unavailable.
-                if task.mention_ids and driver.name != "aixed_hook":
+                # Hook 可后台写入 atlist；多机器人模式则通过绑定窗口的
+                # WeChatGUI.at_member 完成原生 @。其它发送器不得降级成普通文本。
+                if task.mention_ids and driver.name not in ("aixed_hook", "wechatauto_uia_ocr"):
                     continue
                 attempts += 1
                 result = driver.send(task)
