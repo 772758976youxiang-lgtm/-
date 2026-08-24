@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createWriteStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -160,10 +160,31 @@ export async function readAuthenticodeSignature(file, {
   };
 }
 
-async function hashFile(file) {
+async function hashHandle(handle) {
   const hash = crypto.createHash("sha256");
-  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  while (true) {
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    if (bytesRead === 0) break;
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
   return hash.digest("hex");
+}
+
+function installerFileInvalid() {
+  return new WechatControlError("INSTALLER_FILE_INVALID", "微信安装包文件无效");
+}
+
+function installerFileChanged() {
+  return new WechatControlError("INSTALLER_FILE_CHANGED", "微信安装包验证期间发生变化");
+}
+
+const stableStatFields = ["dev", "ino", "size", "mtimeNs", "ctimeNs", "birthtimeNs"];
+
+function hasSameFileState(left, right) {
+  return stableStatFields.every((field) => left[field] === right[field]);
 }
 
 function installerDownloadFailed(details = {}) {
@@ -338,6 +359,9 @@ export function createArtifactManager({
   fetchImpl = fetch,
   tempRoot = os.tmpdir(),
   readSignature = readAuthenticodeSignature,
+  lstatImpl = fs.lstat,
+  openImpl = fs.open,
+  realpathImpl = fs.realpath,
   removeImpl = fs.rm,
   perHopTimeoutMs = defaultPerHopTimeoutMs,
   overallTimeoutMs = defaultOverallTimeoutMs,
@@ -346,6 +370,69 @@ export function createArtifactManager({
 } = {}) {
   const allocatedDirectories = new Map();
   const isAllowedUrl = (url) => url.protocol === "https:" && allowedHosts.has(url.hostname.toLowerCase());
+
+  async function readPathStat(file, changed) {
+    let stat;
+    try {
+      stat = await lstatImpl(file, { bigint: true });
+    } catch {
+      throw changed ? installerFileChanged() : installerFileInvalid();
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw changed ? installerFileChanged() : installerFileInvalid();
+    }
+    return stat;
+  }
+
+  async function captureOpenFile(file, pathStat, expectedSize) {
+    let handle;
+    try {
+      handle = await openImpl(file, "r");
+      const before = await handle.stat({ bigint: true });
+      if (!before.isFile() || !hasSameFileState(pathStat, before)) throw installerFileChanged();
+      if (expectedSize !== undefined && before.size !== BigInt(expectedSize)) {
+        throw new WechatControlError("INSTALLER_SIZE_MISMATCH", "微信安装包大小校验失败");
+      }
+      const digest = await hashHandle(handle);
+      const after = await handle.stat({ bigint: true });
+      if (!hasSameFileState(before, after)) throw installerFileChanged();
+      return { stat: before, digest };
+    } catch (error) {
+      if (error instanceof WechatControlError) throw error;
+      throw installerFileChanged();
+    } finally {
+      if (handle) {
+        try {
+          await handle.close();
+        } catch {}
+      }
+    }
+  }
+
+  async function bindActiveAllocation(file, allocationDirectory) {
+    if (allocationDirectory === undefined) return;
+    const record = allocatedDirectories.get(allocationDirectory);
+    if (!record || record.cleaned || file !== record.file) throw installerFileInvalid();
+
+    let canonicalDirectory;
+    let canonicalFile;
+    try {
+      canonicalDirectory = await realpathImpl(allocationDirectory);
+      canonicalFile = await realpathImpl(file);
+    } catch {
+      throw installerFileInvalid();
+    }
+    const relative = path.relative(canonicalDirectory, canonicalFile);
+    if (
+      canonicalDirectory !== record.canonicalDirectory
+      || relative !== record.filename
+      || path.isAbsolute(relative)
+      || relative.startsWith(`..${path.sep}`)
+      || relative === ".."
+    ) {
+      throw installerFileInvalid();
+    }
+  }
 
   async function cleanup(directory) {
     const record = allocatedDirectories.get(directory);
@@ -357,20 +444,36 @@ export function createArtifactManager({
     record.cleaned = true;
   }
 
-  async function verifyFile(file, policy = TARGET_WECHAT) {
-    const stat = await fs.stat(file);
-    if (stat.size !== policy.size) {
-      throw new WechatControlError("INSTALLER_SIZE_MISMATCH", "微信安装包大小校验失败");
-    }
-    const digest = await hashFile(file);
-    if (digest !== policy.sha256.toLowerCase()) {
+  async function verifyFile(file, policy = TARGET_WECHAT, { allocationDirectory } = {}) {
+    await bindActiveAllocation(file, allocationDirectory);
+    const firstPathStat = await readPathStat(file, false);
+    const first = await captureOpenFile(file, firstPathStat, policy.size);
+    if (first.digest !== policy.sha256.toLowerCase()) {
       throw new WechatControlError("INSTALLER_HASH_MISMATCH", "微信安装包完整性校验失败");
     }
-    const signature = await readSignature(file);
+
+    let signature;
+    let signatureError;
+    try {
+      signature = await readSignature(file);
+    } catch (error) {
+      signatureError = error;
+    }
+
+    const secondPathStat = await readPathStat(file, true);
+    const second = await captureOpenFile(file, secondPathStat);
+    if (
+      !hasSameFileState(firstPathStat, secondPathStat)
+      || !hasSameFileState(first.stat, second.stat)
+      || first.digest !== second.digest
+    ) {
+      throw installerFileChanged();
+    }
+    if (signatureError) throw signatureError;
     if (signature.status !== "Valid" || signature.signerOrganization !== policy.signerOrganization) {
       throw new WechatControlError("INSTALLER_SIGNATURE_INVALID", "微信安装包数字签名无效");
     }
-    return { file, size: stat.size, sha256: digest, signature };
+    return { file, size: Number(first.stat.size), sha256: first.digest, signature };
   }
 
   async function download(policy = TARGET_WECHAT, onProgress = () => {}) {
@@ -379,8 +482,10 @@ export function createArtifactManager({
     try {
       return await raceWithTimeout(async () => {
         directory = await fs.mkdtemp(path.join(tempRoot, "dsh-wechat-installer-"));
-        allocatedDirectories.set(directory, { cleaned: false });
         const file = path.join(directory, "weixin_4.1.10.27.exe");
+        const record = { cleaned: false, file, filename: path.basename(file), canonicalDirectory: "" };
+        allocatedDirectories.set(directory, record);
+        record.canonicalDirectory = await realpathImpl(directory);
         await streamAllowedDownload(
           policy.url,
           file,
@@ -395,7 +500,7 @@ export function createArtifactManager({
             clearTimeoutFn,
           },
         );
-        await verifyFile(file, policy);
+        await verifyFile(file, policy, { allocationDirectory: directory });
         return { directory, file };
       }, {
         timeoutMs: overallTimeoutMs,

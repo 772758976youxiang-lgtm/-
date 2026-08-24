@@ -87,6 +87,112 @@ test("accepts only matching size, SHA-256, and Tencent signature", async (t) => 
   await assert.rejects(invalidSigner.verifyFile(file, policy), { code: "INSTALLER_SIGNATURE_INVALID" });
 });
 
+test("rejects directories as invalid installer files", async (t) => {
+  const root = await createRoot(t);
+  const body = "verified fixture";
+  const policy = policyFor(body);
+  const validSignature = async () => ({ status: "Valid", signerOrganization });
+  const manager = createArtifactManager({ readSignature: validSignature });
+
+  await assert.rejects(manager.verifyFile(root, policy), { code: "INSTALLER_FILE_INVALID" });
+});
+
+test("rejects symbolic links as invalid installer files", async (t) => {
+  const root = await createRoot(t);
+  const body = "verified fixture";
+  const policy = policyFor(body);
+  const validSignature = async () => ({ status: "Valid", signerOrganization });
+  const target = path.join(root, "target.exe");
+  const link = path.join(root, "link.exe");
+  await fs.writeFile(target, body);
+  try {
+    await fs.symlink(target, link, "file");
+    const manager = createArtifactManager({ readSignature: validSignature });
+    await assert.rejects(manager.verifyFile(link, policy), { code: "INSTALLER_FILE_INVALID" });
+  } catch (error) {
+    if (!new Set(["EACCES", "EPERM", "ENOTSUP"]).has(error?.code)) throw error;
+    const injectedManager = createArtifactManager({
+      readSignature: validSignature,
+      lstatImpl: async (file, options) => file === link
+        ? {
+            isFile: () => true,
+            isSymbolicLink: () => true,
+          }
+        : fs.lstat(file, options),
+    });
+    await assert.rejects(injectedManager.verifyFile(link, policy), { code: "INSTALLER_FILE_INVALID" });
+  }
+});
+
+test("rejects a same-size replacement made during signature verification", async (t) => {
+  const root = await createRoot(t);
+  const body = "same-size installer";
+  const file = path.join(root, "installer.exe");
+  const displaced = path.join(root, "installer-before-signature.exe");
+  await fs.writeFile(file, body);
+  const manager = createArtifactManager({
+    readSignature: async (signaturePath) => {
+      await fs.rename(signaturePath, displaced);
+      await fs.writeFile(signaturePath, body);
+      return { status: "Valid", signerOrganization };
+    },
+  });
+
+  await assert.rejects(manager.verifyFile(file, policyFor(body)), { code: "INSTALLER_FILE_CHANGED" });
+});
+
+test("binds managed verification to the exact file in the exact active allocation", async (t) => {
+  const root = await createRoot(t);
+  const body = "fixture";
+  const policy = policyFor(body);
+  const manager = createArtifactManager({
+    tempRoot: root,
+    fetchImpl: async () => response(200, body),
+    readSignature: async () => ({ status: "Valid", signerOrganization }),
+  });
+  const artifact = await manager.download(policy);
+  t.after(() => manager.cleanup(artifact.directory));
+  const options = { allocationDirectory: artifact.directory };
+
+  await assert.doesNotReject(manager.verifyFile(artifact.file, policy, options));
+
+  await t.test("rejects a sibling", async () => {
+    const sibling = path.join(root, "sibling.exe");
+    await fs.writeFile(sibling, body);
+    await assert.rejects(manager.verifyFile(sibling, policy, options), { code: "INSTALLER_FILE_INVALID" });
+  });
+
+  await t.test("rejects path traversal syntax", async () => {
+    const traversal = `${artifact.directory}${path.sep}nested${path.sep}..${path.sep}${path.basename(artifact.file)}`;
+    await assert.rejects(manager.verifyFile(traversal, policy, options), { code: "INSTALLER_FILE_INVALID" });
+  });
+
+  await t.test("rejects an untracked managed-mode directory", async () => {
+    const externalDirectory = await fs.mkdtemp(path.join(root, "external-"));
+    const externalFile = path.join(externalDirectory, "installer.exe");
+    await fs.writeFile(externalFile, body);
+    await assert.rejects(
+      manager.verifyFile(externalFile, policy, { allocationDirectory: externalDirectory }),
+      { code: "INSTALLER_FILE_INVALID" },
+    );
+  });
+});
+
+test("supports external read-only verification without granting cleanup authority", async (t) => {
+  const root = await createRoot(t);
+  const externalDirectory = await fs.mkdtemp(path.join(root, "acceptance-"));
+  const file = path.join(externalDirectory, "installer.exe");
+  const body = "external acceptance fixture";
+  await fs.writeFile(file, body);
+  const manager = createArtifactManager({
+    readSignature: async () => ({ status: "Valid", signerOrganization }),
+  });
+
+  await assert.doesNotReject(manager.verifyFile(file, policyFor(body)));
+  await assert.rejects(manager.cleanup(externalDirectory), { code: "INSTALLER_CLEANUP_NOT_ALLOWED" });
+  assert.equal(await fs.readFile(file, "utf8"), body);
+});
+
 test("follows approved redirects manually and atomically publishes an exact download", async (t) => {
   const root = await createRoot(t);
   const body = "verified fixture";
