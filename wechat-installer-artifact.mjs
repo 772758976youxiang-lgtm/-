@@ -33,10 +33,108 @@ const signatureScript = String.raw`
 }
 `;
 
-function parseSignerOrganization(subject) {
-  const match = /(?:^|,\s*)O=(?:"((?:[^"]|"")*)"|((?:\\.|[^,])*))/i.exec(String(subject || ""));
-  const organization = match?.[1] ?? match?.[2] ?? "";
-  return organization.replace(/""/g, '"').replace(/\\,/g, ",").trim();
+export function parseX500SignerOrganization(subject) {
+  const input = String(subject || "");
+  const organizations = [];
+  const separators = new Set([",", ";", "+"]);
+  const escapedCharacters = new Set(['"', "#", "+", ",", ";", "<", "=", ">", "\\", " "]);
+  let index = 0;
+
+  const invalid = () => {
+    throw new WechatControlError("INSTALLER_SIGNATURE_INVALID", "微信安装包数字签名无效");
+  };
+  const skipSpaces = () => {
+    while (input[index] === " ") index += 1;
+  };
+  const readEscape = () => {
+    index += 1;
+    if (index >= input.length) invalid();
+    if (/^[0-9a-f]$/i.test(input[index]) && /^[0-9a-f]$/i.test(input[index + 1] || "")) {
+      const bytes = [];
+      while (
+        /^[0-9a-f]$/i.test(input[index])
+        && /^[0-9a-f]$/i.test(input[index + 1] || "")
+      ) {
+        bytes.push(Number.parseInt(input.slice(index, index + 2), 16));
+        index += 2;
+        if (
+          input[index] !== "\\"
+          || !/^[0-9a-f]$/i.test(input[index + 1] || "")
+          || !/^[0-9a-f]$/i.test(input[index + 2] || "")
+        ) break;
+        index += 1;
+      }
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes));
+      } catch {
+        invalid();
+      }
+    }
+    const escaped = input[index];
+    if (!escapedCharacters.has(escaped)) invalid();
+    index += 1;
+    return escaped;
+  };
+  const readQuotedValue = () => {
+    index += 1;
+    let value = "";
+    while (index < input.length) {
+      if (input[index] === "\\") {
+        value += readEscape();
+      } else if (input[index] === '"') {
+        if (input[index + 1] === '"') {
+          value += '"';
+          index += 2;
+        } else {
+          index += 1;
+          return value;
+        }
+      } else {
+        value += input[index];
+        index += 1;
+      }
+    }
+    invalid();
+  };
+  const readUnquotedValue = () => {
+    if (input[index] === "#") invalid();
+    let value = "";
+    while (index < input.length && !separators.has(input[index])) {
+      if (input[index] === "\\") value += readEscape();
+      else {
+        value += input[index];
+        index += 1;
+      }
+    }
+    return value.trimEnd();
+  };
+
+  skipSpaces();
+  while (index < input.length) {
+    const typeStart = index;
+    while (index < input.length && input[index] !== "=" && !separators.has(input[index])) index += 1;
+    if (input[index] !== "=") invalid();
+    const attributeType = input.slice(typeStart, index).trim();
+    if (!/^(?:[a-z][a-z0-9-]*|[0-9]+(?:\.[0-9]+)+)$/i.test(attributeType)) invalid();
+    index += 1;
+    skipSpaces();
+
+    const value = input[index] === '"' ? readQuotedValue() : readUnquotedValue();
+    skipSpaces();
+    if (index < input.length && !separators.has(input[index])) invalid();
+    if (/^O$/i.test(attributeType) || attributeType === "2.5.4.10") {
+      if (!value) invalid();
+      organizations.push(value);
+    }
+
+    if (index === input.length) break;
+    index += 1;
+    skipSpaces();
+    if (index === input.length || separators.has(input[index])) invalid();
+  }
+
+  if (organizations.length !== 1) invalid();
+  return organizations[0];
 }
 
 export async function readAuthenticodeSignature(file, {
@@ -58,7 +156,7 @@ export async function readAuthenticodeSignature(file, {
   }
   return {
     status: String(result?.Status || ""),
-    signerOrganization: parseSignerOrganization(result?.Subject),
+    signerOrganization: parseX500SignerOrganization(result?.Subject),
   };
 }
 

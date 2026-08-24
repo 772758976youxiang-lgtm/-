@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   createArtifactManager,
+  parseX500SignerOrganization,
   readAuthenticodeSignature,
 } from "../wechat-installer-artifact.mjs";
 import { WechatControlError } from "../wechat-version-policy.mjs";
@@ -202,6 +203,81 @@ test("reads Authenticode status and certificate organization with a separate enc
   assert.match(invocation.args[3], /\$PSHOME/);
   assert.match(invocation.args[3], /Microsoft\.PowerShell\.Security\.psd1/);
   assert.deepEqual(invocation.options, { timeoutMs: 15_000, maxOutputBytes: 64 * 1024 });
+});
+
+test("parses exactly one X.500 organization across escaped, quoted, and multi-valued subjects", () => {
+  const cases = [
+    ["CN=Tencent\\, Inc., O=Tencent Technology (Shenzhen) Company Limited, C=CN", signerOrganization],
+    ["CN=Signer, O=Tencent\\+Technology\\=Shenzhen, C=CN", "Tencent+Technology=Shenzhen"],
+    ["CN=Signer, O=\"Tencent, Technology + Shenzhen = Company\", C=CN", "Tencent, Technology + Shenzhen = Company"],
+    ["CN=Signer+O=Tencent Technology (Shenzhen) Company Limited, C=CN", signerOrganization],
+    ["CN=Signer, 2.5.4.10=Tencent Technology (Shenzhen) Company Limited, C=CN", signerOrganization],
+  ];
+
+  for (const [subject, expected] of cases) {
+    assert.equal(parseX500SignerOrganization(subject), expected, subject);
+  }
+});
+
+test("parses a hex escape immediately followed by a non-hex escape", () => {
+  assert.equal(
+    parseX500SignerOrganization("CN=Signer, O=Tencent\\2C\\+Technology, C=CN"),
+    "Tencent,+Technology",
+  );
+});
+
+test("rejects duplicate or multiple X.500 organization attributes", () => {
+  const subjects = [
+    `O=${signerOrganization}, O=${signerOrganization}`,
+    `O=${signerOrganization}+2.5.4.10=${signerOrganization}, C=CN`,
+    `O=Attacker, CN=Signer, 2.5.4.10=${signerOrganization}`,
+  ];
+
+  for (const subject of subjects) {
+    assert.throws(
+      () => parseX500SignerOrganization(subject),
+      { code: "INSTALLER_SIGNATURE_INVALID" },
+      subject,
+    );
+  }
+});
+
+test("does not treat deceptive attribute ordering or embedded O text as the signer organization", async (t) => {
+  assert.equal(
+    parseX500SignerOrganization(`CN=O=${signerOrganization}, OU=${signerOrganization}, O=Attacker`),
+    "Attacker",
+  );
+  const root = await createRoot(t);
+  const file = path.join(root, "installer.exe");
+  await fs.writeFile(file, "verified fixture");
+  const filePolicy = policyFor("verified fixture");
+  const manager = createArtifactManager({
+    readSignature: async () => ({
+      status: "Valid",
+      signerOrganization: parseX500SignerOrganization(`CN=O=${signerOrganization}, O=Attacker`),
+    }),
+  });
+  await assert.rejects(manager.verifyFile(file, filePolicy), { code: "INSTALLER_SIGNATURE_INVALID" });
+});
+
+test("rejects malformed X.500 signer subjects and subjects without exactly one organization", () => {
+  const subjects = [
+    "",
+    "CN=Signer, OU=Tencent",
+    "CN=Signer, O=\"unterminated",
+    "CN=Signer, O=trailing\\",
+    "CN=Signer,,O=Tencent",
+    "CN=Signer+O=Tencent+",
+    "CN=Signer, O",
+  ];
+
+  for (const subject of subjects) {
+    assert.throws(
+      () => parseX500SignerOrganization(subject),
+      { code: "INSTALLER_SIGNATURE_INVALID" },
+      subject,
+    );
+  }
 });
 
 test("cleans up successful artifacts once and rejects untracked directories", async (t) => {
