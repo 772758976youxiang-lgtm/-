@@ -4,7 +4,10 @@ import copy
 import json
 import os
 import shutil
+import sys
 import tempfile
+import threading
+import types
 import unittest
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -205,6 +208,63 @@ class WeChatChannelTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(calls, [("张三", "你好", "测试群", True)])
 
+    def test_uia_driver_patches_missing_wechatauto_threading_import(self):
+        package = types.ModuleType("wechatauto")
+        package.__path__ = []
+        guia = types.ModuleType("wechatauto.guia")
+
+        class Gui:
+            def __init__(self, hwnd=None):
+                self.hwnd = hwnd
+
+        guia.WeChatGUI = Gui
+        package.guia = guia
+        previous_package = sys.modules.get("wechatauto")
+        previous_guia = sys.modules.get("wechatauto.guia")
+        sys.modules["wechatauto"] = package
+        sys.modules["wechatauto.guia"] = guia
+        try:
+            client = UiaOcrSendDriver(hwnd=88)._client()
+            self.assertIs(guia.threading, threading)
+            self.assertEqual(client.hwnd, 88)
+        finally:
+            if previous_package is None:
+                sys.modules.pop("wechatauto", None)
+            else:
+                sys.modules["wechatauto"] = previous_package
+            if previous_guia is None:
+                sys.modules.pop("wechatauto.guia", None)
+            else:
+                sys.modules["wechatauto.guia"] = previous_guia
+
+    def test_uia_driver_parses_isolated_worker_result(self):
+        import wechat_channel.drivers as drivers
+
+        calls = []
+        original = drivers.subprocess.run
+
+        def fake_run(command, **kwargs):
+            calls.append((command, kwargs))
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout='DSH_UIA_RESULT={"ok":true,"error":null,"details":{"status":"success"}}\n',
+                stderr="",
+            )
+
+        drivers.subprocess.run = fake_run
+        try:
+            result = UiaOcrSendDriver(lambda _target: "江俊", hwnd=88, timeout=45).send(
+                SendTask("wxid_contact", "你好", "manual", "manual:1")
+            )
+        finally:
+            drivers.subprocess.run = original
+        self.assertTrue(result.ok)
+        self.assertEqual(result.driver, "wechatauto_uia_ocr")
+        self.assertEqual(calls[0][0][1:], ["-m", "wechat_channel.uia_worker"])
+        self.assertEqual(json.loads(calls[0][1]["input"])["target"], "江俊")
+        self.assertTrue(calls[0][1]["input"].isascii())
+        self.assertEqual(calls[0][1]["timeout"], 45)
+
     def test_hook_driver_posts_group_mention_endpoint_with_visible_prefix(self):
         requests = []
 
@@ -224,6 +284,14 @@ class WeChatChannelTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(requests[0][0], "http://127.0.0.1:30001/SendAtText")
         self.assertEqual(requests[0][1], {"wxidorgid": "group@chatroom", "msg": "@张三 你好", "wxids": ["wxid_member"]})
+
+    def test_hook_driver_rejects_a_port_owned_by_another_wechat_instance(self):
+        driver = HookSendDriver("http://127.0.0.1:30001", expected_hwnd=88)
+        driver._owns_bound_window = lambda: (False, {"window_pid": 100, "hook_owner_pids": [200]})
+        result = driver.send(SendTask("friend", "hello", "m1", "m1:reply"))
+        self.assertFalse(result.ok)
+        self.assertIn("different WeChat instance", result.error)
+        self.assertEqual(result.details["window_pid"], 100)
 
     def test_session_and_send_tasks_persist(self):
         self.store.set_session("wechat:a:c", "session-1", {"a": 1})

@@ -27,9 +27,12 @@ def build_service(config: Dict[str, Any]) -> WeChatChannelService:
     drivers = []
     hook_endpoint = str(send_settings.get("hook_endpoint") or "").strip()
     if hook_endpoint:
-        drivers.append(HookSendDriver(hook_endpoint, float(send_settings["timeout_seconds"])))
+        drivers.append(HookSendDriver(hook_endpoint, min(15.0, float(send_settings["timeout_seconds"])),
+                                      expected_hwnd=config.get("runtime", {}).get("wechatHwnd")))
     if send_settings.get("fallbacks"):
-        drivers.append(UiaOcrSendDriver(receive.display_name, verify=True, hwnd=config.get("runtime", {}).get("wechatHwnd")))
+        drivers.append(UiaOcrSendDriver(receive.display_name, verify=True,
+                                        hwnd=config.get("runtime", {}).get("wechatHwnd"),
+                                        timeout=float(send_settings["timeout_seconds"])))
     router = SendRouter(drivers, int(send_settings["max_retries"]))
     agent = make_agent_adapter(config, store)
     return WeChatChannelService(config, store, receive, router, agent)

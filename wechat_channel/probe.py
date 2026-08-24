@@ -30,7 +30,7 @@ def _process_name(pid: int) -> str:
     return ""
 
 
-def list_windows() -> List[Dict[str, Any]]:
+def list_windows(include_hidden: bool = False) -> List[Dict[str, Any]]:
     if os.name != "nt":
         return []
     user32 = ctypes.windll.user32
@@ -38,7 +38,7 @@ def list_windows() -> List[Dict[str, Any]]:
     callbacks = []
 
     def visit(hwnd: int, _lparam: int) -> bool:
-        if not user32.IsWindowVisible(hwnd):
+        if not include_hidden and not user32.IsWindowVisible(hwnd):
             return True
         title_buffer = ctypes.create_unicode_buffer(256)
         class_buffer = ctypes.create_unicode_buffer(256)
@@ -69,9 +69,9 @@ def list_windows() -> List[Dict[str, Any]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe WeChat accounts and windows without controlling them")
-    parser.add_argument("kind", choices=("accounts", "windows"))
+    parser.add_argument("kind", choices=("accounts", "windows", "all_windows"))
     args = parser.parse_args()
-    value = list_accounts() if args.kind == "accounts" else list_windows()
+    value = list_accounts() if args.kind == "accounts" else list_windows(include_hidden=args.kind == "all_windows")
     print(json.dumps(value, ensure_ascii=False))
     return 0
 

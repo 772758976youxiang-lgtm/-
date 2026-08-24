@@ -2,13 +2,13 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.5.3）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.5.8）：**
 
 | 模块 | 说明 |
 |---|---|
 | 桥接 `server.mjs` | 钉钉机器人(stream)/数字人(dws)/企微预留：随宿主启停、崩溃自重启、管理API 5175、热加载、看门狗、工作区自愈、防互聊/防自环 |
 | 扫码 `auth.mjs` | 钉钉数字人设备流登录，成功自动注册通道（120s 超时） |
-| Agent 通道管理工具 | `im_channel_manage`；普通 Harness 会话可搭建、启停、诊断、删除微信/钉钉通道，外部 IM 会话禁止调用 |
+| Agent 通道管理工具 | `im_channel_manage`；普通 Harness 会话可搭建、启停、诊断、删除微信/钉钉通道，也可按联系人/群聊名称主动发送微信消息；外部 IM 会话禁止调用 |
 | 「连接」页 | **原生 client 插件**；只显示已连接机器人，多机器人分别配置 |
 | 「外部打开」 | 会话详情按钮（官方 npm 版经注入生效；原生槽位插件化在后续版本） |
 | 技能 ×2 | `im-channel-setup`（通道自助接入）+ `harness-docs`（说明书自动维护） |
@@ -65,6 +65,16 @@ v0.5.1 收紧微信窗口识别：仅接受 `Weixin.exe` / `WeChat.exe` 进程�
 v0.5.2 将每分钟进度回报补齐为 Harness 原生 plugin notice 结构（含稳定消息 ID、来源和摘要），确保进度消息能在发起搭建的原会话中稳定唤醒 Agent 并直接汇报。
 
 v0.5.3 补齐多机器人的群聊原生 @ 发送：Hook 可用时继续后台写入 `atlist`；独立机器人不共用全局 Hook 时，使用已绑定窗口的 `WeChatGUI.at_member` 选择群成员并发送，不再因禁止普通文本降级而导致整条群回复失败。
+
+v0.5.4 为每个微信机器人隔离进程工作目录、`wechatauto_logs` 和系统临时目录，修复安装目录日志权限与多个机器人争用同一 OCR 临时文件的问题，并兼容 `wechatauto` 缺失的 `threading` 导入。`im_channel_manage` 新增 `send_wechat_message`，可按备注、昵称、微信号、群聊名称或内部 ID 主动寻址并等待发送确认；重复搭建会复用未绑定通道并清除旧空壳，避免无效通道复制窗口句柄。
+
+v0.5.5 将 UIA 每次发送放进独立、可超时回收的工作进程，窗口定位卡住时只终止本次发送，不再拖死接收、状态和管理 API；默认单次 UIA 超时调整为 90 秒。
+
+v0.5.6 恢复并强制执行 Hook 优先、UIA/OCR 兜底的发送顺序。Harness 绑定新机器人时自动检查该窗口所属微信进程监听的 Hook 端口；每次 Hook 发送前再次比对窗口 PID 与端口拥有者，避免多微信机器人误用另一个账号的 Hook。Hook 不可用、端口不属于该机器人或发送失败时，才进入隔离的 UIA/OCR 工作进程。
+
+v0.5.7 修复 Windows UIA 隔离进程的中文管道乱码：联系人、群聊名称和消息正文统一使用 ASCII JSON Unicode 转义跨进程传输，不再受系统代码页影响。
+
+v0.5.8 将 Hook 单次探测/发送超时限制为 15 秒，并捕获端口检测异常，确保 Hook 异常时一定能进入 UIA/OCR 兜底而不会中断发送队列。
 
 在普通 Harness 会话中说“帮我搭建微信通道”，Agent 会调用工具完成本机检查、依赖补齐和启动。实现细节见 [`wechat_channel/README.md`](wechat_channel/README.md)，真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 

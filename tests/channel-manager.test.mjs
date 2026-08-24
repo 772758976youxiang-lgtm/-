@@ -59,3 +59,37 @@ test("external IM sessions cannot call channel lifecycle tools", async () => {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 });
+
+test("normal Harness sessions can proactively send through a selected WeChat bot", async () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "dsh-channel-manager-"));
+  const mapFile = path.join(temporary, "map.json");
+  fs.writeFileSync(mapFile, "{}", "utf8");
+  const { tool, dispose } = fixture(mapFile);
+  const previousFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options = {}) => {
+    request = { url: String(url), options };
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { ok: true, channelId: "wechat-bot-1", target: { id: "filehelper", name: "文件传输助手" }, delivery: { status: "sent", driver: "wechatauto_uia_ocr", attempts: 1, error: null } };
+      },
+    };
+  };
+  try {
+    assert.ok(tool.parameters.properties.action.enum.includes("send_wechat_message"));
+    const value = await tool.execute(
+      { action: "send_wechat_message", channelId: "wechat-bot-1", target: "文件传输助手", text: "test" },
+      { agent: { session: { header: { id: "local-session" } } } },
+    );
+    assert.equal(value.ok, true);
+    assert.match(value.message, /已确认发给/);
+    assert.match(request.url, /\/api\/wechat\/send$/);
+    assert.deepEqual(JSON.parse(request.options.body), { channelId: "wechat-bot-1", target: "文件传输助手", text: "test" });
+  } finally {
+    globalThis.fetch = previousFetch;
+    dispose();
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});

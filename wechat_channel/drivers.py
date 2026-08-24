@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .models import DriverHealth, MessageBatch, RawMessage, SendResult, SendTask
@@ -268,20 +271,51 @@ class WeChatDbReceiveDriver(ReceiveDriver):
 class HookSendDriver(SendDriver):
     name = "aixed_hook"
 
-    def __init__(self, endpoint: str, timeout: float = 15):
+    def __init__(self, endpoint: str, timeout: float = 15, expected_hwnd: Optional[int] = None):
         self.endpoint = endpoint.rstrip("/")
         self.timeout = float(timeout)
+        self.expected_hwnd = int(expected_hwnd) if expected_hwnd else None
+
+    def _owns_bound_window(self) -> Tuple[bool, Dict[str, Any]]:
+        if not self.expected_hwnd or sys.platform != "win32":
+            return True, {}
+        import ctypes
+        from ctypes import wintypes
+
+        pid = wintypes.DWORD()
+        if not ctypes.windll.user32.GetWindowThreadProcessId(self.expected_hwnd, ctypes.byref(pid)):
+            return False, {"reason": "bound window is unavailable", "hwnd": self.expected_hwnd}
+        port = int(urlparse(self.endpoint).port or 80)
+        completed = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True,
+                                   text=True, encoding="utf-8", errors="replace", timeout=5,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        owners = set()
+        pattern = re.compile(r"^\s*TCP\s+\S+:" + re.escape(str(port)) + r"\s+\S+\s+LISTENING\s+(\d+)\s*$", re.I)
+        for line in completed.stdout.splitlines():
+            match = pattern.match(line)
+            if match:
+                owners.add(int(match.group(1)))
+        details = {"hwnd": self.expected_hwnd, "window_pid": int(pid.value), "hook_port": port,
+                   "hook_owner_pids": sorted(owners)}
+        return int(pid.value) in owners, details
 
     def health(self) -> DriverHealth:
         try:
+            owned, details = self._owns_bound_window()
+            if not owned:
+                return DriverHealth(False, self.name, "hook belongs to a different WeChat instance", details)
             status = _json_request(self.endpoint + "/QueryDB/status", None, self.timeout, method="GET")
-            return DriverHealth(True, self.name, "hook HTTP service reachable", {"status": status})
+            return DriverHealth(True, self.name, "hook HTTP service reachable", {**details, "status": status})
         except Exception as exc:
             return DriverHealth(False, self.name, str(exc), {"error_type": type(exc).__name__})
 
     def send(self, task: SendTask) -> SendResult:
         target = "filehelper" if task.target_id in ("self", "filehelper") else task.target_id
         try:
+            owned, details = self._owns_bound_window()
+            if not owned:
+                return SendResult(False, self.name, target, task.idempotency_key,
+                                  "hook belongs to a different WeChat instance", details=details)
             mentions = [str(value).strip() for value in task.mention_ids if str(value).strip()]
             text = task.text
             if mentions:
@@ -297,8 +331,10 @@ class HookSendDriver(SendDriver):
             ok = response.get("ret") in (0, "0")
             return SendResult(ok, self.name, target, task.idempotency_key,
                               None if ok else str(response.get("retmsg") or response),
-                              details={"response": response, "mention_ids": mentions})
+                              details={**details, "response": response, "mention_ids": mentions})
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+            return SendResult(False, self.name, target, task.idempotency_key, str(exc), details={"error_type": type(exc).__name__})
+        except Exception as exc:
             return SendResult(False, self.name, target, task.idempotency_key, str(exc), details={"error_type": type(exc).__name__})
 
 
@@ -307,11 +343,12 @@ class UiaOcrSendDriver(SendDriver):
 
     def __init__(self, target_resolver: Optional[Callable[[str], str]] = None,
                  gui_factory: Optional[Callable[[], Any]] = None, verify: bool = True,
-                 hwnd: Optional[int] = None):
+                 hwnd: Optional[int] = None, timeout: float = 90):
         self.target_resolver = target_resolver or (lambda value: value)
         self.gui_factory = gui_factory
         self.verify = verify
         self.hwnd = int(hwnd) if hwnd else None
+        self.timeout = max(5.0, float(timeout))
         self._gui = None
         self._lock = threading.RLock()
 
@@ -319,14 +356,23 @@ class UiaOcrSendDriver(SendDriver):
         if self._gui is None:
             factory = self.gui_factory
             if factory is None:
-                from wechatauto.guia import WeChatGUI
-                self._gui = WeChatGUI(hwnd=self.hwnd)
+                # wechatauto 0.3.0 uses threading.Thread in guia without
+                # importing threading. Inject it before constructing the GUI.
+                import wechatauto.guia as guia
+                guia.threading = threading
+                self._gui = guia.WeChatGUI(hwnd=self.hwnd)
             else:
                 self._gui = factory()
         return self._gui
 
     def health(self) -> DriverHealth:
         try:
+            if self.gui_factory is None and self.hwnd and sys.platform == "win32":
+                import ctypes
+                available = bool(ctypes.windll.user32.IsWindow(self.hwnd))
+                return DriverHealth(available, self.name,
+                                    "bound WeChat window exists" if available else "bound WeChat window is unavailable",
+                                    {"hwnd": self.hwnd})
             available = bool(self._client().desktop_available())
             return DriverHealth(available, self.name,
                                 "desktop available" if available else "WeChat desktop is unavailable")
@@ -337,6 +383,32 @@ class UiaOcrSendDriver(SendDriver):
         target = "文件传输助手" if task.target_id in ("self", "filehelper") else self.target_resolver(task.target_id)
         with self._lock:
             try:
+                if self.gui_factory is None:
+                    payload = {
+                        "hwnd": self.hwnd,
+                        "target": target,
+                        "text": task.text,
+                        "verify": self.verify,
+                        "mention_name": task.mention_names[0] if task.mention_names and task.target_id.endswith("@chatroom") else "",
+                    }
+                    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+                    completed = subprocess.run(
+                        [sys.executable, "-m", "wechat_channel.uia_worker"],
+                        # Keep the pipe payload ASCII-only. Windows child-process
+                        # code pages otherwise corrupt Chinese contact names.
+                        input=json.dumps(payload, ensure_ascii=True), capture_output=True,
+                        text=True, encoding="utf-8", timeout=self.timeout, creationflags=flags,
+                    )
+                    marker = "DSH_UIA_RESULT="
+                    line = next((value for value in reversed(completed.stdout.splitlines()) if value.startswith(marker)), "")
+                    if not line:
+                        error = completed.stderr.strip() or completed.stdout.strip() or "UIA worker returned no result"
+                        return SendResult(False, self.name, target, task.idempotency_key, error[-1000:],
+                                          details={"worker_exit_code": completed.returncode})
+                    response = json.loads(line[len(marker):])
+                    return SendResult(bool(response.get("ok")), self.name, target, task.idempotency_key,
+                                      None if response.get("ok") else str(response.get("error") or "UIA send failed"),
+                                      details=response.get("details") or {})
                 if task.mention_names and task.target_id.endswith("@chatroom"):
                     response = self._client().at_member(task.mention_names[0], task.text, who=target, verify=self.verify)
                 else:
@@ -350,6 +422,11 @@ class UiaOcrSendDriver(SendDriver):
                     message = str(response)
                     details = {"response": message[:500]}
                 return SendResult(ok, self.name, target, task.idempotency_key, None if ok else str(message), details=details)
+            except subprocess.TimeoutExpired:
+                self._gui = None
+                return SendResult(False, self.name, target, task.idempotency_key,
+                                  "UIA send timed out after %.0f seconds" % self.timeout,
+                                  details={"error_type": "TimeoutExpired", "timeout_seconds": self.timeout})
             except Exception as exc:
                 self._gui = None
                 return SendResult(False, self.name, target, task.idempotency_key, str(exc),

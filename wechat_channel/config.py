@@ -31,7 +31,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "group_reply_mention_sender": True,
         "fallbacks": ["wechatauto_uia", "wechatauto_ocr"],
         "fallback_repository": "https://github.com/fanyuantaier/wechatauto-replica",
-        "timeout_seconds": 15,
+        "timeout_seconds": 90,
         "max_retries": 2,
     },
     "agent": {
