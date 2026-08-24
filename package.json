@@ -30,7 +30,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/install-assets.mjs",
-    "test": "node --check lib/index.js && node --check lib/client.js && node --check server.mjs && node --check scripts/install-assets.mjs && node --test scripts/wechat-version-policy.test.mjs scripts/install-utils.test.mjs && node scripts/check-compat.mjs && node scripts/run-python-tests.mjs",
+    "test": "node --check lib/index.js && node --check lib/client.js && node --check server.mjs && node --check scripts/install-assets.mjs && node --test scripts/wechat-version-policy.test.mjs scripts/wechat-windows-discovery.test.mjs scripts/install-utils.test.mjs && node scripts/check-compat.mjs && node scripts/run-python-tests.mjs",
     "test:wechat": "node scripts/run-python-tests.mjs",
     "verify:install": "node scripts/verify-overrides.mjs",
     "prepack": "npm test && node scripts/clean-python-cache.mjs"
