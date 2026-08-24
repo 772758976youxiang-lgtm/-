@@ -65,7 +65,10 @@ async function login() {
       try {
         const acctId = (found.user || "u").replace(/[^A-Za-z0-9_-]/g, "").slice(-10) || "u";
         const regBody = { id: `dingtalk-person-${acctId}`, platform: "dingtalk", name: `钉钉-${found.userName || found.user}-数字人`, mode: "dws", profile: found.profile, ignoreSenders: ["harness"], enabled: true };
-        const rr = await fetch("http://127.0.0.1:5175/api/channels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(regBody) });
+        const managementToken = process.env.DSH_CHANNEL_MANAGEMENT_TOKEN || "";
+        const rr = await fetch("http://127.0.0.1:5175/api/channels", { method: "POST", headers: {
+          "Content-Type": "application/json", Authorization: `Bearer ${managementToken}`,
+        }, body: JSON.stringify(regBody) });
         const rj = await rr.json().catch(() => ({}));
         console.log(`[自动注册] ${rj.ok ? "OK " + rj.id : "FAIL " + (rj.error || JSON.stringify(rj))}`);
       } catch (e) { console.log("[自动注册失败]", e?.message ?? e); }

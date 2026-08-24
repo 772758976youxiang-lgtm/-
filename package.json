@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-channel-im",
-  "version": "0.3.23",
+  "version": "0.4.1",
   "description": "DSH 外部功能一站式插件：钉钉/数字人/Windows 微信个人号通道，含数据库接收、Hook→UIA/OCR 发送、SQLite、AgentAdapter、连接页、技能与预设。",
   "type": "module",
   "exports": {
@@ -31,7 +31,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/install-assets.mjs",
-    "test": "node --check lib/index.js && node --check lib/client.js && node --check lib/self-profile.js && node --check server.mjs && node --check scripts/install-assets.mjs && node --test scripts/install-utils.test.mjs tests/self-profile.test.mjs && node scripts/check-compat.mjs && node scripts/run-python-tests.mjs",
+    "test": "node --check lib/index.js && node --check lib/client.js && node --check lib/self-profile.js && node --check server.mjs && node --check scripts/install-assets.mjs && node --test scripts/install-utils.test.mjs tests/self-profile.test.mjs tests/channel-manager.test.mjs && node scripts/check-compat.mjs && node scripts/run-python-tests.mjs",
     "test:wechat": "node scripts/run-python-tests.mjs",
     "verify:install": "node scripts/verify-overrides.mjs",
     "prepack": "npm test && node scripts/clean-python-cache.mjs"

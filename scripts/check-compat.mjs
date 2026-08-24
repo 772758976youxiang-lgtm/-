@@ -28,14 +28,16 @@ assert.equal(serverPlugin.name, "dsh-channel-im");
 assert.equal(serverPlugin.configSchema.properties.wechatPython.type, "string");
 assert.equal(serverPlugin.configSchema.properties.wechatConfig.type, "string");
 assert.equal(serverPlugin.configSchema.properties.wechatExecutable.type, "string");
+assert.deepEqual(serverPlugin.inject, ["tools"]);
 
 const client = read("lib/client.js");
 assert.match(client, /exports\.inject\s*=\s*\["slots"\]/);
 assert.match(client, /name:\s*"settings\.section"/);
 assert.match(client, /c\.mode === "wechat_pc"/);
-assert.match(client, /role:\s*"switch"/);
-assert.match(client, /"aria-checked"/);
-assert.match(client, /api\/wechat\/toggle/);
+assert.match(client, /Harness 托管/);
+assert.doesNotMatch(client, /role:\s*"switch"/);
+assert.doesNotMatch(client, /"aria-checked"/);
+assert.doesNotMatch(client, /api\/wechat\/toggle/);
 
 const server = read("server.mjs");
 assert.match(server, /ensureConfigFile\(\)/);
@@ -52,6 +54,8 @@ assert.match(server, /\["\/PID", String\(item\.pid\)/);
 assert.doesNotMatch(server, /\["\/IM"/);
 assert.match(server, /path === "\/api\/wechat\/status"/);
 assert.match(server, /path === "\/api\/wechat\/toggle"/);
+assert.match(server, /DSH_CHANNEL_MANAGEMENT_TOKEN/);
+assert.match(server, /通道生命周期只能由本机 Harness Agent 管理/);
 assert.doesNotMatch(server, /\{\s*\.\.\.c,\s*status:/);
 
 const installer = read("scripts/install-assets.mjs");
@@ -62,7 +66,8 @@ assert.doesNotMatch(installer, /fs\.isDirectorySync/);
 
 const auth = read("auth.mjs");
 assert.match(auth, /dws\.exe/);
-assert.match(read("skills/im-channel-setup.md"), /package-root\.txt/);
+assert.match(auth, /DSH_CHANNEL_MANAGEMENT_TOKEN/);
+assert.match(read("skills/im-channel-setup.md"), /im_channel_manage/);
 
 for (const packageName of [
   "dsh-api-remotes",

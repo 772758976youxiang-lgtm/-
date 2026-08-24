@@ -50,7 +50,7 @@ DSH_CHANNEL_IM_TARGET_ROOTS=/path/to/deepseek-harness/node_modules/@deepseek-ai 
 | 7 | **数字人登录态跨机** | 新机数字人不认证 | macOS keychain 模式无法 `dws auth export`；直接**重新扫码**（auth.mjs，符合“真人=必扫码”约定） |
 | 8 | **私人仓库访问** | 安装报“could not read from remote” | 确认 SSH key 已加入 GitHub；`ssh -T git@github.com` 验证 |
 | 9 | **微信通道位置** | 群聊通道在 Mac/Linux 上不存在 | 微信 Hook/UIA/OCR 只能在 **Windows**（小号+4.1.10.27+version.dll）；正式服务位于 `wechat_channel/`，旧 `examples/windows-gateway/gateway.py` 仅供演示兼容 |
-| 9a | **正式微信通道依赖** | `mode=wechat_pc` 启动后立即退出 | Windows 执行 `python -m pip install -r wechat_channel/requirements.txt`；再运行 `python -m wechat_channel diagnose --config wechat_channel/config.example.json` |
+| 9a | **正式微信通道依赖** | 微信通道未搭建或换设备后路径失效 | 在普通 Harness 会话中说“帮我搭建微信通道”；`im_channel_manage` 会按当前设备重建配置、补齐 Python 依赖并启动诊断 |
 | 9b | **微信发送降级** | Hook 可发但 UIA/OCR 不可用 | 打开并登录微信主聊天窗口、保持桌面解锁；普通文本依次走 Hook、UIA/OCR，全部失败才记为失败 |
 | 9c | **群聊真实 @** | 日志显示 `SendAtText` 404 | 为 `4.1.10.27` Hook 应用 `wechat_channel/hook/aixed-4.1.10.27-send-at-text.patch` 并重新构建/替换 `version.dll`；群 @ 不允许降级到 UIA/OCR |
 | 10 | **凭证安全** | 勿把 `~/.dsh-im-channels.json`、`.credentials.yaml`、`~/.dsh/settings.yaml` 提交/公开 | 仓库/插件零凭证；泄露则尽快去相应平台重置 |

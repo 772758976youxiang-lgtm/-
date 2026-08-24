@@ -21,6 +21,7 @@ const PYTHON_BIN = process.env.DSH_WECHAT_PYTHON || (process.platform === "win32
 const DEFAULT_WECHAT_CONFIG = process.env.DSH_WECHAT_CONFIG || path.join(os.homedir(), ".dsh-wechat-channel.json");
 const WECHAT_EXECUTABLE = process.env.DSH_WECHAT_EXECUTABLE || "";
 const WECHAT_CHANNEL_ID = "wechat-personal";
+const MANAGEMENT_TOKEN = process.env.DSH_CHANNEL_MANAGEMENT_TOKEN || "";
 const PRESET_ROOT = path.join(os.homedir(), ".dsh", ".agent-presets");
 
 const NOW = () => new Date().toISOString().slice(11, 19);
@@ -814,7 +815,10 @@ async function toggleWechatChannel(enabled) {
     platform: "wechat",
     name: previous.name || "微信个人号",
     mode: "wechat_pc",
-    configFile: previous.configFile || DEFAULT_WECHAT_CONFIG,
+    // 从其他设备同步来的绝对路径不可复用；缺失时始终回落到当前设备配置。
+    configFile: previous.configFile && fs.existsSync(previous.configFile) ? previous.configFile : DEFAULT_WECHAT_CONFIG,
+    managedBy: "harness",
+    managedDevice: os.hostname(),
     enabled: !!enabled,
   };
   wechatHealthCache.at = 0;
@@ -871,7 +875,21 @@ function writeStatus() {
   try { fs.writeFileSync(STATUS_FILE, JSON.stringify({ channels: items, ts: Date.now() }, null, 2)); } catch (e) { log("[写状态文件失败]", e?.message ?? e); }
 }
 function syncChannels() {
-  const cfgs = loadConfig();
+  let cfgs = loadConfig();
+  const thisDevice = os.hostname();
+  let deviceAdapted = false;
+  cfgs = cfgs.map((cfg) => {
+    if (cfg.mode !== "wechat_pc") return cfg;
+    const foreignDevice = cfg.managedDevice && cfg.managedDevice !== thisDevice;
+    const missingConfig = cfg.configFile && !fs.existsSync(cfg.configFile);
+    if (!foreignDevice && !missingConfig && cfg.managedDevice === thisDevice) return cfg;
+    deviceAdapted = true;
+    return { ...cfg, configFile: DEFAULT_WECHAT_CONFIG, managedBy: "harness", managedDevice: thisDevice };
+  });
+  if (deviceAdapted) {
+    saveConfig(cfgs);
+    log(`[设备自适配] 微信通道配置已切换到 ${thisDevice}`);
+  }
   for (const cfg of cfgs) ensureChannelPreset(cfg);
   const byId = new Map(cfgs.map((c) => [c.id, c]));
   for (const id of [...channels.keys()]) {
@@ -934,6 +952,15 @@ const httpServer = http.createServer(async (req, res) => {
     return res.end();
   }
   const path = new URL(req.url, "http://localhost").pathname;
+  const harnessMutation = (req.method === "POST" && path === "/api/wechat/toggle")
+    || (req.method === "POST" && path === "/api/channels")
+    || (req.method === "DELETE" && path.startsWith("/api/channels/"));
+  if (harnessMutation) {
+    const authorization = String(req.headers.authorization || "");
+    if (!MANAGEMENT_TOKEN || authorization !== `Bearer ${MANAGEMENT_TOKEN}`) {
+      return send(403, { ok: false, error: "通道生命周期只能由本机 Harness Agent 管理" });
+    }
+  }
   if (req.method === "GET" && path === "/api/channels") {
     const items = loadConfig().map((c) => ({
       id: c.id,

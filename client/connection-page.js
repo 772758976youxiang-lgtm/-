@@ -11,12 +11,11 @@
  */
 
 /**
- * @param {{ t: Function, readStatus: Function, readWechat: Function, toggleWechat: Function }} props
+ * @param {{ t: Function, readStatus: Function, readWechat: Function }} props
  */
-export default function ConnectionSection({ t, readStatus, readWechat, toggleWechat, readRules, saveRules, readContacts }) {
+export default function ConnectionSection({ t, readStatus, readWechat, readRules, saveRules, readContacts }) {
   const [items, setItems] = React.useState([]);
   const [wechat, setWechat] = React.useState({ supported: true, enabled: false, phase: "disabled" });
-  const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
   const [rulesOpen, setRulesOpen] = React.useState(false);
   const [rules, setRules] = React.useState({ direct_message: "allow", group_message: "allow", direct_whitelist: [], direct_blacklist: [], group_whitelist: [], group_blacklist: [], group_reply_only_when_mentioned_groups: [], profile_write_authorized_contact: "" });
@@ -41,13 +40,6 @@ export default function ConnectionSection({ t, readStatus, readWechat, toggleWec
   const setGroupMention = (id, enabled) => { const next = { ...rules, group_reply_only_when_mentioned_groups: (rules.group_reply_only_when_mentioned_groups || []).filter((x) => x !== id) }; if (enabled) next.group_reply_only_when_mentioned_groups.push(id); persistRules(next).catch((e) => setError(String(e))); };
   const setProfileWriter = (id) => persistRules({ ...rules, profile_write_authorized_contact: rules.profile_write_authorized_contact === id ? "" : id }).catch((e) => setError(String(e)));
 
-  const changeWechat = async () => {
-    if (busy || wechat.supported === false) return;
-    setBusy(true); setError("");
-    try { setWechat(await toggleWechat(!wechat.enabled)); }
-    catch (reason) { setError(reason?.message ?? String(reason)); }
-    finally { setBusy(false); }
-  };
   const shown = items.filter((c) => c.status === "connected" && c.mode !== "wechat_pc");
   const rowStyle = { display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "14px", background: "var(--dsw-alias-bg-layer-1)", marginBottom: "12px" };
   const dot = () => <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-state-success-primary)", marginLeft: "8px" }} />;
@@ -65,17 +57,14 @@ export default function ConnectionSection({ t, readStatus, readWechat, toggleWec
       <div style={rowStyle}>
         <div style={{ flex: "1", minWidth: "0" }}>
           <div style={{ fontWeight: "600", fontSize: "15px", display: "flex", alignItems: "center", gap: "8px" }}>
-            {t("wechat.name")}<span style={{ fontSize: "12px", color: phaseColor }}>{busy ? t("wechat.processing") : phaseText}</span>
+            {t("wechat.name")}<span style={{ fontSize: "12px", color: phaseColor }}>{phaseText}</span>
           </div>
           <div style={{ fontSize: "12.5px", color: "var(--dsw-alias-label-tertiary)", marginTop: "4px", lineHeight: "19px" }}>
             {wechat.supported === false ? t("wechat.windowsOnly") : wechat.phase === "connected" ? `${wechat.account?.nickname ? `${wechat.account.nickname} · ` : ""}${t("wechat.details")}` : wechat.phase === "waiting_for_existing_process" ? t("wechat.attachHint") : wechat.enabled ? t("wechat.waitingHint") : t("wechat.disabledHint")}
           </div>
           {(error || wechat.error) && <div role="alert" style={{ fontSize: "12px", color: "var(--dsw-alias-state-error-primary, #dc2626)", marginTop: "6px" }}>{error || wechat.error}</div>}
         </div>
-        <button type="button" role="switch" aria-label={t("wechat.aria")} aria-checked={!!wechat.enabled} disabled={busy || wechat.supported === false} onClick={changeWechat}
-          style={{ width: "44px", height: "24px", padding: "2px", border: 0, borderRadius: "999px", cursor: busy || wechat.supported === false ? "not-allowed" : "pointer", opacity: busy ? 0.65 : 1, background: wechat.enabled ? "var(--dsw-alias-brand-primary, #4f6ef7)" : "var(--dsw-alias-fill-secondary, #aeb4bf)" }}>
-          <span style={{ display: "block", width: "20px", height: "20px", borderRadius: "50%", background: "#fff", transform: wechat.enabled ? "translateX(20px)" : "translateX(0)", transition: "transform .18s ease", boxShadow: "0 1px 3px rgba(0,0,0,.25)" }} />
-        </button>
+        <span aria-label={t("wechat.managed")} style={{ padding: "5px 10px", borderRadius: "999px", border: "1px solid var(--dsw-alias-border-l2)", color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-bg-layer-2)", fontSize: "12px", whiteSpace: "nowrap" }}>{t("wechat.managed")}</span>
       </div>
       <div style={rulesCardStyle}>
         <button type="button" onClick={() => setRulesOpen(!rulesOpen)} style={{ width: "100%", minHeight: "48px", border: 0, background: "transparent", padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", color: "var(--dsw-alias-label-primary)", fontWeight: 600, fontSize: "14px" }}><span>群聊、联系人与预设权限</span><span style={{ color: "var(--dsw-alias-label-tertiary)", fontWeight: 400, fontSize: "13px" }}>{rulesOpen ? "收起" : "展开"}</span></button>

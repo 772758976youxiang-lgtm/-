@@ -2,12 +2,13 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.23）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.4.1）：**
 
 | 模块 | 说明 |
 |---|---|
 | 桥接 `server.mjs` | 钉钉机器人(stream)/数字人(dws)/企微预留：随宿主启停、崩溃自重启、管理API 5175、热加载、看门狗、工作区自愈、防互聊/防自环 |
 | 扫码 `auth.mjs` | 钉钉数字人设备流登录，成功自动注册通道（120s 超时） |
+| Agent 通道管理工具 | `im_channel_manage`；普通 Harness 会话可搭建、启停、诊断、删除微信/钉钉通道，外部 IM 会话禁止调用 |
 | 「连接」页 | **原生 client 插件**（同包 dsh.client 面；微信个人号由 Harness 托管、检测与接管） |
 | 「外部打开」 | 会话详情按钮（官方 npm 版经注入生效；原生槽位插件化在后续版本） |
 | 技能 ×2 | `im-channel-setup`（通道自助接入）+ `harness-docs`（说明书自动维护） |
@@ -49,9 +50,13 @@ v0.3.22 收紧残留进程自愈：必须连续三次确认进程无窗口、Hoo
 
 v0.3.23 将 Hook 端口完全不可用的无窗口微信子进程也纳入连续三次残留确认，解决主界面退出后只剩后台子进程、Harness 无法拉起真实登录窗口的问题。
 
-微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
+v0.4.0 将通道生命周期收口到 Harness Agent：连接页移除微信开关，只保留只读状态和规则面板；新增全局结构化工具 `im_channel_manage`，普通 Harness 会话可直接检查环境、搭建/停止微信、配置钉钉机器人、发起钉钉真人扫码、删除通道。所有写接口使用宿主每次启动随机生成的令牌，外部 IM 会话和浏览器页面均不能调用。微信配置在检测到设备变化或旧绝对路径失效时会自动迁移到当前设备，并重新探测 Python、微信路径和依赖。
 
-微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。可在微信配置的 `runtime` 中设置 `{ "wechatStartupMode": "attach" }` 只接管现有进程。控制接口为 `GET /api/wechat/status` 与 `POST /api/wechat/toggle`。
+v0.4.1 对齐 Harness 官方工具插件的具名导出格式，确保全局通道管理工具的 `tools` 注入元数据被 Cordis 正确识别，修复安装 v0.4.0 后宿主启动失败的问题。
+
+在普通 Harness 会话中说“帮我搭建微信通道”，Agent 会调用工具完成本机检查、依赖补齐和启动。实现细节见 [`wechat_channel/README.md`](wechat_channel/README.md)，真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
+
+微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。可在微信配置的 `runtime` 中设置 `{ "wechatStartupMode": "attach" }` 只接管现有进程。`GET /api/wechat/status` 可只读查询；启停、增删通道的写接口必须携带 Harness 宿主令牌，只能通过 `im_channel_manage` 使用。
 
 ## 官方功能对齐（overrides）
 
