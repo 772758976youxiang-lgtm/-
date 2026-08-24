@@ -3,12 +3,12 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Readable } from "node:stream";
 import test from "node:test";
 import {
   createArtifactManager,
   readAuthenticodeSignature,
 } from "../wechat-installer-artifact.mjs";
+import { WechatControlError } from "../wechat-version-policy.mjs";
 
 const signerOrganization = "Tencent Technology (Shenzhen) Company Limited";
 
@@ -18,12 +18,25 @@ async function createRoot(t) {
   return root;
 }
 
+function webBody(chunks = []) {
+  const queue = chunks.map((chunk) => Buffer.from(chunk));
+  return new ReadableStream({
+    pull(controller) {
+      if (queue.length === 0) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(queue.shift());
+    },
+  });
+}
+
 function response(status, body = "", headers = {}) {
   return {
     status,
     ok: status >= 200 && status < 300,
     headers: new Headers(headers),
-    body: Readable.toWeb(Readable.from([Buffer.from(body)])),
+    body: body instanceof ReadableStream ? body : webBody([body]),
   };
 }
 
@@ -189,4 +202,271 @@ test("reads Authenticode status and certificate organization with a separate enc
   assert.match(invocation.args[3], /\$PSHOME/);
   assert.match(invocation.args[3], /Microsoft\.PowerShell\.Security\.psd1/);
   assert.deepEqual(invocation.options, { timeoutMs: 15_000, maxOutputBytes: 64 * 1024 });
+});
+
+test("cleans up successful artifacts once and rejects untracked directories", async (t) => {
+  const root = await createRoot(t);
+  const body = "fixture";
+  const removals = [];
+  const manager = createArtifactManager({
+    tempRoot: root,
+    fetchImpl: async () => response(200, body),
+    readSignature: async () => ({ status: "Valid", signerOrganization }),
+    removeImpl: async (directory, options) => {
+      removals.push({ directory, options });
+      await fs.rm(directory, options);
+    },
+  });
+  const artifact = await manager.download(policyFor(body));
+
+  await manager.cleanup(artifact.directory);
+  await assert.rejects(fs.stat(artifact.directory), { code: "ENOENT" });
+  await manager.cleanup(artifact.directory);
+  assert.deepEqual(removals, [{ directory: artifact.directory, options: { recursive: true, force: true } }]);
+
+  await assert.rejects(
+    manager.cleanup(`${artifact.directory}-attacker-controlled`),
+    { code: "INSTALLER_CLEANUP_NOT_ALLOWED" },
+  );
+  await assert.rejects(manager.cleanup(root), { code: "INSTALLER_CLEANUP_NOT_ALLOWED" });
+});
+
+test("preserves the primary failure and attaches sanitized cleanup diagnostics", async (t) => {
+  const root = await createRoot(t);
+  const body = "fixture";
+  const primary = new WechatControlError("INSTALLER_SIGNATURE_INVALID", "primary failure", { stage: "signature" });
+  const cleanupFailure = Object.assign(new Error("secret cleanup path must not leak"), { code: "EPERM" });
+  const manager = createArtifactManager({
+    tempRoot: root,
+    fetchImpl: async () => response(200, body),
+    readSignature: async () => { throw primary; },
+    removeImpl: async () => { throw cleanupFailure; },
+  });
+
+  await assert.rejects(manager.download(policyFor(body)), (error) => {
+    assert.equal(error, primary);
+    assert.deepEqual(error.details, { stage: "signature", cleanup: { code: "EPERM" } });
+    assert.equal(JSON.stringify(error.details).includes("secret"), false);
+    assert.equal(JSON.stringify(error.details).includes(root), false);
+    return true;
+  });
+});
+
+test("rejects malformed, multiple, unsafe, and mismatched Content-Length before writing", async (t) => {
+  const cases = [
+    ["combined", "7, 7", "INSTALLER_DOWNLOAD_FAILED"],
+    ["negative", "-1", "INSTALLER_DOWNLOAD_FAILED"],
+    ["leading zero", "07", "INSTALLER_DOWNLOAD_FAILED"],
+    ["signed", "+7", "INSTALLER_DOWNLOAD_FAILED"],
+    ["fractional", "7.0", "INSTALLER_DOWNLOAD_FAILED"],
+    ["unsafe", "9007199254740992", "INSTALLER_DOWNLOAD_FAILED"],
+    ["mismatch", "8", "INSTALLER_SIZE_MISMATCH"],
+  ];
+  for (const [label, contentLength, code] of cases) {
+    await t.test(label, async (subtest) => {
+      const root = await createRoot(subtest);
+      let progressCalls = 0;
+      const body = "fixture";
+      const manager = createArtifactManager({
+        tempRoot: root,
+        fetchImpl: async () => ({
+          ...response(200, body),
+          headers: { get: (name) => name.toLowerCase() === "content-length" ? contentLength : null },
+        }),
+        readSignature: async () => assert.fail("signature must not be read"),
+      });
+
+      await assert.rejects(manager.download(policyFor(body), () => { progressCalls += 1; }), { code });
+      assert.equal(progressCalls, 0);
+      assert.deepEqual(await directoryEntries(root), []);
+    });
+  }
+});
+
+test("accepts an exact strict Content-Length", async (t) => {
+  const root = await createRoot(t);
+  const body = "fixture";
+  const manager = createArtifactManager({
+    tempRoot: root,
+    fetchImpl: async () => response(200, body, { "content-length": String(Buffer.byteLength(body)) }),
+    readSignature: async () => ({ status: "Valid", signerOrganization }),
+  });
+  const artifact = await manager.download(policyFor(body));
+  assert.equal(await fs.readFile(artifact.file, "utf8"), body);
+  await manager.cleanup(artifact.directory);
+});
+
+test("normalizes URL, fetch, response, redirect, and body failures", async (t) => {
+  const body = "fixture";
+  const brokenBody = new ReadableStream({
+    start(controller) {
+      controller.enqueue(Buffer.from("fix"));
+      controller.error(Object.assign(new Error("secret body failure"), { code: "EIO" }));
+    },
+  });
+  const cases = [
+    ["invalid URL", "not a URL", async () => assert.fail("fetch must not run")],
+    ["fetch rejection", undefined, async () => { throw Object.assign(new Error("secret fetch failure"), { code: "ECONNRESET" }); }],
+    ["non-2xx", undefined, async () => response(503, body)],
+    ["missing body", undefined, async () => ({ ...response(200, body), body: null })],
+    ["malformed Location", undefined, async () => response(302, "", { location: "https://[invalid" })],
+    ["body failure", undefined, async () => response(200, brokenBody)],
+  ];
+  for (const [label, url, fetchImpl] of cases) {
+    await t.test(label, async (subtest) => {
+      const root = await createRoot(subtest);
+      const manager = createArtifactManager({
+        tempRoot: root,
+        fetchImpl,
+        readSignature: async () => assert.fail("signature must not be read"),
+      });
+      await assert.rejects(
+        manager.download({ ...policyFor(body), ...(url ? { url } : {}) }),
+        (error) => {
+          assert.equal(error.code, "INSTALLER_DOWNLOAD_FAILED");
+          assert.equal(JSON.stringify(error.details || {}).includes("secret"), false);
+          return true;
+        },
+      );
+      assert.deepEqual(await directoryEntries(root), []);
+    });
+  }
+});
+
+test("preserves explicit download policy and security errors", async (t) => {
+  const root = await createRoot(t);
+  const explicit = new WechatControlError("INSTALLER_SIGNATURE_INVALID", "signature rejected");
+  const manager = createArtifactManager({
+    tempRoot: root,
+    fetchImpl: async () => { throw explicit; },
+  });
+  await assert.rejects(manager.download(policyFor("fixture")), (error) => error === explicit);
+});
+
+test("enforces per-hop timeout even when fetch ignores AbortSignal", async (t) => {
+  const root = await createRoot(t);
+  let signal;
+  const manager = createArtifactManager({
+    tempRoot: root,
+    perHopTimeoutMs: 20,
+    overallTimeoutMs: 1_000,
+    fetchImpl: async (url, options) => {
+      signal = options.signal;
+      return new Promise(() => {});
+    },
+  });
+  const started = Date.now();
+  await assert.rejects(manager.download(policyFor("fixture")), {
+    code: "INSTALLER_DOWNLOAD_FAILED",
+    details: { stage: "timeout", scope: "hop" },
+  });
+  assert.equal(signal.aborted, true);
+  assert.ok(Date.now() - started < 500);
+  assert.deepEqual(await directoryEntries(root), []);
+});
+
+test("enforces overall timeout while a response body stalls and cancels the body", async (t) => {
+  const root = await createRoot(t);
+  let cancelled = 0;
+  const stalledBody = new ReadableStream({
+    pull(controller) {
+      if (controller.desiredSize > 0) controller.enqueue(Buffer.from("fix"));
+      return new Promise(() => {});
+    },
+    cancel() { cancelled += 1; },
+  });
+  const manager = createArtifactManager({
+    tempRoot: root,
+    perHopTimeoutMs: 1_000,
+    overallTimeoutMs: 20,
+    fetchImpl: async () => response(200, stalledBody),
+  });
+  await assert.rejects(manager.download(policyFor("fixture")), {
+    code: "INSTALLER_DOWNLOAD_FAILED",
+    details: { stage: "timeout", scope: "overall" },
+  });
+  assert.equal(cancelled, 1);
+  assert.deepEqual(await directoryEntries(root), []);
+});
+
+test("cancels redirect bodies and clears all deadline timers after success", async (t) => {
+  const root = await createRoot(t);
+  let redirectCancelled = 0;
+  const redirectBody = new ReadableStream({ cancel() { redirectCancelled += 1; } });
+  const timers = new Set();
+  const setTimeoutFn = (callback, delay) => {
+    const timer = { callback, delay };
+    timers.add(timer);
+    return timer;
+  };
+  const clearTimeoutFn = (timer) => timers.delete(timer);
+  const body = "fixture";
+  let requests = 0;
+  const manager = createArtifactManager({
+    tempRoot: root,
+    perHopTimeoutMs: 100,
+    overallTimeoutMs: 1_000,
+    setTimeoutFn,
+    clearTimeoutFn,
+    fetchImpl: async () => {
+      requests += 1;
+      return requests === 1
+        ? response(302, redirectBody, { location: "https://objects.githubusercontent.com/file.exe" })
+        : response(200, body);
+    },
+    readSignature: async () => ({ status: "Valid", signerOrganization }),
+  });
+  const artifact = await manager.download(policyFor(body));
+  assert.equal(redirectCancelled, 1);
+  assert.equal(timers.size, 0);
+  await manager.cleanup(artifact.directory);
+});
+
+test("preserves a malformed redirect error when redirect body cancellation fails", async (t) => {
+  const root = await createRoot(t);
+  let cancelled = 0;
+  const redirectBody = new ReadableStream({
+    cancel() {
+      cancelled += 1;
+      throw Object.assign(new Error("secret cancellation failure"), { code: "EIO" });
+    },
+  });
+  const manager = createArtifactManager({
+    tempRoot: root,
+    fetchImpl: async () => response(302, redirectBody, { location: "https://[invalid" }),
+  });
+
+  await assert.rejects(manager.download(policyFor("fixture")), (error) => {
+    assert.equal(error.code, "INSTALLER_DOWNLOAD_FAILED");
+    assert.equal(JSON.stringify(error.details || {}).includes("secret"), false);
+    return true;
+  });
+  assert.equal(cancelled, 1);
+  assert.deepEqual(await directoryEntries(root), []);
+});
+
+test("clears hop and overall deadline timers when fetch rejects", async (t) => {
+  const root = await createRoot(t);
+  const timers = new Set();
+  let timerCount = 0;
+  const setTimeoutFn = (callback, delay) => {
+    const timer = { callback, delay };
+    timerCount += 1;
+    timers.add(timer);
+    return timer;
+  };
+  const clearTimeoutFn = (timer) => timers.delete(timer);
+  const manager = createArtifactManager({
+    tempRoot: root,
+    perHopTimeoutMs: 100,
+    overallTimeoutMs: 1_000,
+    setTimeoutFn,
+    clearTimeoutFn,
+    fetchImpl: async () => { throw Object.assign(new Error("secret fetch failure"), { code: "ECONNRESET" }); },
+  });
+
+  await assert.rejects(manager.download(policyFor("fixture")), { code: "INSTALLER_DOWNLOAD_FAILED" });
+  assert.equal(timerCount, 2);
+  assert.equal(timers.size, 0);
+  assert.deepEqual(await directoryEntries(root), []);
 });
