@@ -571,6 +571,46 @@ test("enforces overall timeout while a response body stalls and cancels the body
   assert.deepEqual(await directoryEntries(root), []);
 });
 
+test("cleans an untracked allocation that resolves after the overall timeout", async (t) => {
+  const root = await createRoot(t);
+  let allocatorUsed = false;
+  let lateDirectory;
+  let releaseAllocation;
+  let resolveAllocationCreated;
+  let resolveLateCleanup;
+  const allocationGate = new Promise((resolve) => { releaseAllocation = resolve; });
+  const allocationCreated = new Promise((resolve) => { resolveAllocationCreated = resolve; });
+  const lateCleanup = new Promise((resolve) => { resolveLateCleanup = resolve; });
+  const manager = createArtifactManager({
+    tempRoot: root,
+    overallTimeoutMs: 20,
+    mkdtempImpl: async (prefix) => {
+      allocatorUsed = true;
+      await allocationGate;
+      lateDirectory = await fs.mkdtemp(prefix);
+      resolveAllocationCreated();
+      return lateDirectory;
+    },
+    removeImpl: async (directory, options) => {
+      await fs.rm(directory, options);
+      if (directory === lateDirectory) resolveLateCleanup();
+    },
+    fetchImpl: async () => new Promise(() => {}),
+  });
+
+  await assert.rejects(manager.download(policyFor("fixture")), {
+    code: "INSTALLER_DOWNLOAD_FAILED",
+    details: { stage: "timeout", scope: "overall" },
+  });
+  releaseAllocation();
+  assert.equal(allocatorUsed, true);
+  await allocationCreated;
+  await lateCleanup;
+
+  assert.deepEqual(await directoryEntries(root), []);
+  await assert.rejects(manager.cleanup(lateDirectory), { code: "INSTALLER_CLEANUP_NOT_ALLOWED" });
+});
+
 test("cancels redirect bodies and clears all deadline timers after success", async (t) => {
   const root = await createRoot(t);
   let redirectCancelled = 0;

@@ -362,6 +362,7 @@ export function createArtifactManager({
   lstatImpl = fs.lstat,
   openImpl = fs.open,
   realpathImpl = fs.realpath,
+  mkdtempImpl = fs.mkdtemp,
   removeImpl = fs.rm,
   perHopTimeoutMs = defaultPerHopTimeoutMs,
   overallTimeoutMs = defaultOverallTimeoutMs,
@@ -481,7 +482,12 @@ export function createArtifactManager({
     const overallController = new AbortController();
     try {
       return await raceWithTimeout(async () => {
-        directory = await fs.mkdtemp(path.join(tempRoot, "dsh-wechat-installer-"));
+        const pendingDirectory = await mkdtempImpl(path.join(tempRoot, "dsh-wechat-installer-"));
+        if (overallController.signal.aborted) {
+          await removeImpl(pendingDirectory, { recursive: true, force: true });
+          throw overallController.signal.reason;
+        }
+        directory = pendingDirectory;
         const file = path.join(directory, "weixin_4.1.10.27.exe");
         const record = { cleaned: false, file, filename: path.basename(file), canonicalDirectory: "" };
         allocatedDirectories.set(directory, record);
