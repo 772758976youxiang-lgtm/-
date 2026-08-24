@@ -45,23 +45,47 @@ function channelPresetId(cfg) {
 function yamlScalar(value) {
   return JSON.stringify(String(value || ""));
 }
+function channelPresetDefinition(cfg, directory) {
+  return [
+    "# 通道机器人专属预设：自我设定初始为空，只挂载受限的自我设定插件。",
+    "- id: channel-self-profile",
+    "  name: '@deepseek-ai/dsh-channel-im/self-profile'",
+    "  config:",
+    "    channelId: " + yamlScalar(cfg?.id || "channel"),
+    "    profilePath: " + yamlScalar(path.join(directory, "self-profile.md")),
+    "    maxChars: 12000",
+    "",
+  ].join("\n");
+}
 function ensureChannelPreset(cfg) {
   const preset = channelPresetId(cfg);
   const directory = path.join(PRESET_ROOT, preset);
   fs.mkdirSync(directory, { recursive: true });
   const metadata = path.join(directory, "preset.yml");
   const definition = path.join(directory, "agent.cordis.yml");
+  const profile = path.join(directory, "self-profile.md");
+  const oldDescription = "为通道「" + (cfg?.name || cfg?.id || "") + "」自动创建的独立空白预设。";
+  const newDescription = "为通道「" + (cfg?.name || cfg?.id || "") + "」自动创建的独立机器人预设，可持续完善自身设定。";
   if (!fs.existsSync(metadata)) {
     fs.writeFileSync(metadata, [
       "name: " + yamlScalar((cfg?.name || cfg?.id || "通道") + " 通道"),
-      "description: " + yamlScalar("为通道「" + (cfg?.name || cfg?.id || "") + "」自动创建的独立空白预设。"),
+      "description: " + yamlScalar(newDescription),
       "order: 100",
       "",
     ].join("\n"));
+  } else {
+    const currentMetadata = fs.readFileSync(metadata, "utf8");
+    if (currentMetadata.includes(yamlScalar(oldDescription))) {
+      fs.writeFileSync(metadata, currentMetadata.replace(yamlScalar(oldDescription), yamlScalar(newDescription)));
+    }
   }
-  if (!fs.existsSync(definition)) {
-    // An empty Cordis component list deliberately leaves persona and tool calls blank.
-    fs.writeFileSync(definition, "# 通道专属预设：人设与工具调用暂为空白。\n[]\n");
+  const previous = fs.existsSync(definition) ? fs.readFileSync(definition, "utf8") : "";
+  const legacyBlank = previous.trim() === "# 通道专属预设：人设与工具调用暂为空白。\n[]";
+  if (!previous || legacyBlank) {
+    fs.writeFileSync(definition, channelPresetDefinition(cfg, directory));
+  }
+  if (!fs.existsSync(profile)) {
+    fs.writeFileSync(profile, "", "utf8");
   }
   return preset;
 }

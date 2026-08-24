@@ -224,6 +224,10 @@ class WeChatChannelService:
             metadata.update(quote)
         allowed, reason = self.policy.allow(message)
         mentioned = self.receive.mentions_self(raw.content) if message.conversation_type == "group" else False
+        metadata["mentioned"] = mentioned
+        metadata["mention_display_masked"] = bool(
+            message.conversation_type == "group" and re.search(r"@\s*(?:\*{2,}|＊{2,})", str(raw.content or ""))
+        )
         mention_groups = set(str(value) for value in (self.config["policy"].get("group_reply_only_when_mentioned_groups") or []))
         if allowed and message.conversation_type == "group" and message.conversation_id in mention_groups and not mentioned:
             allowed, reason = False, "group message does not mention account"

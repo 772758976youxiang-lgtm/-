@@ -91,12 +91,20 @@ class WeChatChannelTests(unittest.TestCase):
         message = StandardMessage("m", "wechat", "a", "group@chatroom", "group", "member", "text", "hello", 1)
         prompt = DshAgentAdapter._contextual_prompt(message, {
             "conversation_name": "测试群", "sender_name": "张三", "sender_remark": "三哥", "sender_wechat_id": "zhangsan",
+            "mentioned": True, "mention_display_masked": True,
         })
         self.assertIn("会话名称：测试群", prompt)
         self.assertIn("发送者：张三", prompt)
         self.assertIn("发送者备注：三哥", prompt)
         self.assertIn("发送者微信号：zhangsan", prompt)
+        self.assertIn("机器人被 @：是（微信已将提及名称脱敏显示为 @***）", prompt)
         self.assertTrue(prompt.endswith("【用户消息】\nhello"))
+
+    def test_masked_group_mention_is_recognized_as_self_mention(self):
+        db = FakeDb()
+        receive = WeChatDbReceiveDriver(self.store, db_factory=lambda **_: db)
+        self.assertTrue(receive.mentions_self("member:\n@*** 你好"))
+        self.assertTrue(receive.mentions_self("member:\n@＊＊＊ 你好"))
 
     def test_first_poll_establishes_baseline_and_does_not_reply_history(self):
         db = FakeDb()

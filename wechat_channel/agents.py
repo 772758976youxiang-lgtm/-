@@ -209,6 +209,11 @@ class DshAgentAdapter(AgentAdapter):
                            ("发送者备注", "sender_remark"), ("发送者微信号", "sender_wechat_id")):
             if metadata.get(key):
                 lines.append(label + "：" + str(metadata[key]))
+        if message.conversation_type == "group":
+            mention = "是" if metadata.get("mentioned") else "否"
+            if metadata.get("mention_display_masked"):
+                mention += "（微信已将提及名称脱敏显示为 @***）"
+            lines.append("机器人被 @：" + mention)
         if metadata.get("quoted_message"):
             lines.append("引用消息发送者：" + str(metadata.get("quoted_sender") or "未知"))
             lines.append("引用的消息：" + str(metadata["quoted_message"]))

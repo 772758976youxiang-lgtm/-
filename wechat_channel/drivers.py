@@ -219,10 +219,15 @@ class WeChatDbReceiveDriver(ReceiveDriver):
         return profile
 
     def mentions_self(self, content: str) -> bool:
+        text = str(content or "")
+        # WeChat 4.x may replace the mentioned account's display name with
+        # ``@***`` in the decrypted local message. Treat that marker as an
+        # explicit self mention so mention-only group rules still work.
+        if re.search(r"@\s*(?:\*{2,}|＊{2,})", text):
+            return True
         try:
             info = self._database().get_self_info() or {}
             names = [str(info.get(key) or "").strip() for key in ("remark", "nick_name", "username")]
-            text = str(content or "")
             return any(name and ("@" + name) in text for name in names)
         except Exception:
             return False

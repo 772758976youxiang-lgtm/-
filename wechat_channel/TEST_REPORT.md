@@ -43,3 +43,5 @@ Hook 的 `/QueryDB/status` 在本机返回 `IsLogin=0`，但 Hook 实发和数�
 - 安装回归：postinstall 会创建 `~/.dsh-channel-im/auth.mjs`、`server.mjs` 与 `package-root.txt`，Windows 真人扫码入口可直接定位 `~/.local/bin/dws.exe`。
 - 身份上下文回归：默认策略允许群聊；会话与发送者的昵称、备注、微信号（alias，可用时）会注入 DSH Agent 消息上下文，群聊使用群名称作为会话标题。
 - 规则面板回归：管理 API 可保存群聊/联系人黑白名单；每个群聊可独立设置“仅 @AI 回复”。未获回复的群消息仍写入 `/api/recent`，SQLite 固定保留最近 200 条上下文，设置面板不展示消息正文。
+- 通道自我设定回归：专属预设能真实挂载 `channel_self_profile_update`，只写入该预设目录的 `self-profile.md`，动态人设会在下一模型步骤重新读取；不接入数据库或记忆库。
+- 群聊提及回归：微信 4.x 将本账号名称脱敏成 `@***` 或全角 `@＊＊＊` 时，规则层识别为已提及，并向 Agent 上下文明示“机器人被 @：是”。

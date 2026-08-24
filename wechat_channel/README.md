@@ -4,7 +4,7 @@
 
 ## 已实现
 
-- 私聊与群聊文本标准化，群聊 `sender_wxid:\n正文` 解析；
+- 私聊与群聊文本标准化，群聊 `sender_wxid:\n正文` 解析；微信将本账号提及脱敏为 `@***` 时仍能识别“机器人被 @”；
 - 首次启动只建立 `sort_seq` 基线，不回复历史消息；
 - SQLite 持久化游标、去重键、Agent Session、发送任务、结果和审计日志；
 - `sender_id=2` 自发消息过滤；
@@ -98,7 +98,7 @@ Invoke-RestMethod -Method Post -ContentType application/json `
 
 ## AgentAdapter
 
-默认 `agent.adapter=dsh`，直接复用本机 DSH 的工作区与 Session；由桥接器为每个通道自动创建并指定独立预设（初始人设和工具调用均为空）。也可改为：
+默认 `agent.adapter=dsh`，直接复用本机 DSH 的工作区与 Session；由桥接器为每个通道自动创建并指定独立预设。预设初始自我设定为空，只挂载机器人专用的自我设定工具；它可在回复后把稳定人设写入当前通道的 `self-profile.md`，但不会保存用户资料、聊天内容、任务或记忆。也可改为：
 
 - `echo`：独立验证微信收发；
 - `http`：调用 `/health`、`/sessions`、`/respond`；
