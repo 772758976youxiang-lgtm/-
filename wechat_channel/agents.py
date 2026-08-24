@@ -163,12 +163,18 @@ class DshAgentAdapter(AgentAdapter):
 
     def get_or_create_session(self, conversation_key: str, metadata: Dict[str, Any]) -> str:
         existing = self.store.get_session(conversation_key)
+        title = "微信·" + str(metadata.get("conversation_name") or metadata.get("conversation_id") or "会话")
         if existing:
+            # Contact/group remarks can become available after a session was first
+            # created. Keep the existing Harness session aligned on every message.
+            try:
+                self._rpc("session.rename", {"sessionId": existing, "title": title[:40]})
+            except Exception:
+                pass
             return existing
         created = self._rpc("session.create", {"workspaceId": self._workspace(), "agentPreset": self.preset})
         session_id = str(created["sessionId"])
         self.store.set_session(conversation_key, session_id, metadata)
-        title = "微信·" + str(metadata.get("conversation_name") or metadata.get("conversation_id") or "会话")
         try:
             self._rpc("session.rename", {"sessionId": session_id, "title": title[:40]})
         except Exception:
@@ -198,6 +204,9 @@ class DshAgentAdapter(AgentAdapter):
                            ("发送者备注", "sender_remark"), ("发送者微信号", "sender_wechat_id")):
             if metadata.get(key):
                 lines.append(label + "：" + str(metadata[key]))
+        if metadata.get("quoted_message"):
+            lines.append("引用消息发送者：" + str(metadata.get("quoted_sender") or "未知"))
+            lines.append("引用的消息：" + str(metadata["quoted_message"]))
         return "\n".join(lines) + "\n【用户消息】\n" + message.content
 
     def respond(self, session_id: str, message: StandardMessage, metadata: Dict[str, Any]) -> AgentReply:

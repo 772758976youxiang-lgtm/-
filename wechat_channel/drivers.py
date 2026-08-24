@@ -52,6 +52,9 @@ class ReceiveDriver(ABC):
     def contact_profile(self, target_id: str) -> Dict[str, str]:
         return {"id": str(target_id or "")}
 
+    def mentions_self(self, content: str) -> bool:
+        return False
+
 
 class SendDriver(ABC):
     name = "send"
@@ -214,6 +217,15 @@ class WeChatDbReceiveDriver(ReceiveDriver):
             pass
         profile["display_name"] = profile["remark"] or profile["nickname"] or profile["wechat_id"] or target
         return profile
+
+    def mentions_self(self, content: str) -> bool:
+        try:
+            info = self._database().get_self_info() or {}
+            names = [str(info.get(key) or "").strip() for key in ("remark", "nick_name", "username")]
+            text = str(content or "")
+            return any(name and ("@" + name) in text for name in names)
+        except Exception:
+            return False
 
     def contacts(self, limit: int = 100) -> List[Dict[str, Any]]:
         db = self._database()

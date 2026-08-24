@@ -195,6 +195,24 @@ class WeChatChannelTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIn("sensitive-word", reason)
 
+    def test_blacklists_override_allow_modes(self):
+        policy = Policy({
+            "enabled": True, "direct_message": "allow", "group_message": "allow",
+            "direct_blacklist": ["blocked-friend"], "group_blacklist": ["blocked-group"],
+        })
+        direct = StandardMessage("d", "wechat", "a", "blocked-friend", "direct", "blocked-friend", "text", "hello", 1)
+        group = StandardMessage("g", "wechat", "a", "blocked-group", "group", "member", "text", "hello", 1)
+        self.assertFalse(policy.allow(direct)[0])
+        self.assertFalse(policy.allow(group)[0])
+
+    def test_quote_context_is_added_to_agent_prompt(self):
+        quote = WeChatChannelService._quote_context("收到\n引用 张三 的消息：原始内容")
+        self.assertEqual(quote, {"quoted_message": "原始内容", "quoted_sender": "张三"})
+        message = StandardMessage("m", "wechat", "a", "friend", "direct", "friend", "text", "收到", 1)
+        prompt = DshAgentAdapter._contextual_prompt(message, quote)
+        self.assertIn("引用消息发送者：张三", prompt)
+        self.assertIn("引用的消息：原始内容", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

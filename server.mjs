@@ -646,6 +646,33 @@ async function toggleWechatChannel(enabled) {
   log(`[微信开关] ${enabled ? "开启，等待扫码/登录" : "关闭"}`);
   return getWechatControlStatus();
 }
+function readWechatRules() {
+  const cfg = getWechatConfigEntry();
+  const file = cfg?.configFile || DEFAULT_WECHAT_CONFIG;
+  let custom = {};
+  try { custom = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+  return { ok: true, policy: custom.policy || {} };
+}
+async function updateWechatRules(policy) {
+  const cfg = getWechatConfigEntry();
+  if (!cfg) throw new Error("微信通道尚未配置");
+  const modes = new Set(["allow", "whitelist", "deny"]);
+  const cleanList = (value) => [...new Set((Array.isArray(value) ? value : []).map((v) => String(v).trim()).filter(Boolean))].slice(0, 500);
+  const next = {
+    direct_message: modes.has(policy?.direct_message) ? policy.direct_message : "allow",
+    group_message: modes.has(policy?.group_message) ? policy.group_message : "allow",
+    direct_whitelist: cleanList(policy?.direct_whitelist), direct_blacklist: cleanList(policy?.direct_blacklist),
+    group_whitelist: cleanList(policy?.group_whitelist), group_blacklist: cleanList(policy?.group_blacklist),
+    group_reply_only_when_mentioned: !!policy?.group_reply_only_when_mentioned,
+  };
+  const file = cfg.configFile || DEFAULT_WECHAT_CONFIG;
+  let custom = {};
+  try { custom = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+  custom.policy = { ...(custom.policy || {}), ...next };
+  fs.writeFileSync(file, JSON.stringify(custom, null, 2));
+  stopWechatChannel(cfg.id); startWechatChannel(cfg);
+  return { ok: true, policy: custom.policy };
+}
 function writeStatus() {
   const cfgs = loadConfig();
   const items = cfgs.map((c) => ({
@@ -730,6 +757,11 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === "GET" && path === "/api/wechat/status") {
     try { return send(200, await getWechatControlStatus()); }
     catch (error) { return send(500, { ok: false, error: error?.message ?? String(error) }); }
+  }
+  if (req.method === "GET" && path === "/api/wechat/rules") return send(200, readWechatRules());
+  if (req.method === "POST" && path === "/api/wechat/rules") {
+    try { return send(200, await updateWechatRules((await readJsonBody(req)).policy)); }
+    catch (error) { return send(400, { ok: false, error: error?.message ?? String(error) }); }
   }
   if (req.method === "POST" && path === "/api/wechat/toggle") {
     try {

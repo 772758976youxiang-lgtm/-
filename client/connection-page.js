@@ -13,11 +13,15 @@
 /**
  * @param {{ t: Function, readStatus: Function, readWechat: Function, toggleWechat: Function }} props
  */
-export default function ConnectionSection({ t, readStatus, readWechat, toggleWechat }) {
+export default function ConnectionSection({ t, readStatus, readWechat, toggleWechat, readRules, saveRules, readContacts, readRecent }) {
   const [items, setItems] = React.useState([]);
   const [wechat, setWechat] = React.useState({ supported: true, enabled: false, phase: "disabled" });
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [rulesOpen, setRulesOpen] = React.useState(false);
+  const [rules, setRules] = React.useState({ direct_message: "allow", group_message: "allow", direct_whitelist: [], direct_blacklist: [], group_whitelist: [], group_blacklist: [], group_reply_only_when_mentioned: false });
+  const [contacts, setContacts] = React.useState([]);
+  const [contexts, setContexts] = React.useState([]);
   React.useEffect(() => {
     let alive = true;
     const load = async () => {
@@ -25,12 +29,16 @@ export default function ConnectionSection({ t, readStatus, readWechat, toggleWec
         const [list, nextWechat] = await Promise.all([readStatus(), readWechat()]);
         if (alive && Array.isArray(list)) setItems(list);
         if (alive && nextWechat) setWechat(nextWechat);
+        const nextRules = await readRules(); if (alive && nextRules?.policy) setRules((old) => ({ ...old, ...nextRules.policy }));
       } catch {}
     };
     load();
     const timer = setInterval(load, 3000);
     return () => { alive = false; clearInterval(timer); };
   }, [readStatus, readWechat]);
+  React.useEffect(() => { if (!rulesOpen) return; readContacts().then((v) => setContacts(v?.items || [])); readRecent().then((v) => setContexts((v?.items || []).filter((x) => x.message?.conversation_type === "group").slice(0, 12))); }, [rulesOpen]);
+  const persistRules = async (next) => { setRules(next); const saved = await saveRules(next); if (saved?.policy) setRules((old) => ({ ...old, ...saved.policy })); };
+  const setMember = (type, id, action) => { const white = `${type}_whitelist`, black = `${type}_blacklist`; const next = { ...rules, [white]: (rules[white] || []).filter((x) => x !== id), [black]: (rules[black] || []).filter((x) => x !== id) }; if (action === "white") next[white].push(id); if (action === "black") next[black].push(id); persistRules(next).catch((e) => setError(String(e))); };
 
   const changeWechat = async () => {
     if (busy || wechat.supported === false) return;
@@ -63,6 +71,17 @@ export default function ConnectionSection({ t, readStatus, readWechat, toggleWec
           style={{ width: "44px", height: "24px", padding: "2px", border: 0, borderRadius: "999px", cursor: busy || wechat.supported === false ? "not-allowed" : "pointer", opacity: busy ? 0.65 : 1, background: wechat.enabled ? "var(--dsw-alias-brand-primary, #4f6ef7)" : "var(--dsw-alias-fill-secondary, #aeb4bf)" }}>
           <span style={{ display: "block", width: "20px", height: "20px", borderRadius: "50%", background: "#fff", transform: wechat.enabled ? "translateX(20px)" : "translateX(0)", transition: "transform .18s ease", boxShadow: "0 1px 3px rgba(0,0,0,.25)" }} />
         </button>
+      </div>
+      <div style={{ border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "14px", overflow: "hidden", marginBottom: "12px" }}>
+        <button type="button" onClick={() => setRulesOpen(!rulesOpen)} style={{ width: "100%", border: 0, background: "var(--dsw-alias-bg-layer-1)", padding: "12px 16px", display: "flex", justifyContent: "space-between", cursor: "pointer", color: "var(--dsw-alias-label-primary)", fontWeight: 600 }}><span>规则与上下文</span><span>{rulesOpen ? "收起" : "展开"}</span></button>
+        {rulesOpen && <div style={{ padding: "16px", borderTop: "1px solid var(--dsw-alias-border-l2)" }}>
+          <p style={{ fontSize: "12px", color: "var(--dsw-alias-label-tertiary)", marginTop: 0 }}>黑名单优先于白名单；不回复的群消息仍会记录在下方。</p>
+          <label>群聊规则 <select value={rules.group_message} onChange={(e) => persistRules({ ...rules, group_message: e.target.value })}><option value="allow">允许全部</option><option value="whitelist">仅白名单</option><option value="deny">全部拦截</option></select></label>{" "}
+          <label>联系人规则 <select value={rules.direct_message} onChange={(e) => persistRules({ ...rules, direct_message: e.target.value })}><option value="allow">允许全部</option><option value="whitelist">仅白名单</option><option value="deny">全部拦截</option></select></label>{" "}
+          <label><input type="checkbox" checked={!!rules.group_reply_only_when_mentioned} onChange={(e) => persistRules({ ...rules, group_reply_only_when_mentioned: e.target.checked })} /> 仅群内 @我时回复</label>
+          {["group", "direct"].map((kind) => <div key={kind} style={{ marginTop: "14px" }}><strong>{kind === "group" ? "群聊名单" : "联系人名单"}</strong>{contacts.filter((c) => c.type === kind).map((c) => <div key={c.id} style={{ display: "flex", gap: "8px", padding: "6px 0", fontSize: "12px" }}><span style={{ flex: 1 }}>{c.remark || c.nickname || c.name || c.id} · {c.id}</span><button onClick={() => setMember(kind, c.id, "white")}>白名单</button><button onClick={() => setMember(kind, c.id, "black")}>黑名单</button><button onClick={() => setMember(kind, c.id, "clear")}>清除</button></div>)}</div>)}
+          <div style={{ marginTop: "16px" }}><strong>群聊上下文（最近 12 条）</strong>{contexts.map((item) => <div key={item.message_id} style={{ padding: "8px", marginTop: "6px", background: "var(--dsw-alias-fill-secondary)", borderRadius: "8px", fontSize: "12px" }}><div>{item.message?.context?.conversation_name || item.message?.conversation_id} · {item.message?.context?.sender_name || item.message?.sender_id}{item.message?.reply_allowed ? " · 已回复" : " · 仅记录"}</div><div>{item.message?.content}</div>{item.message?.context?.quoted_message && <div>引用：{item.message.context.quoted_message}</div>}</div>)}</div>
+        </div>}
       </div>
       {shown.length === 0
         ? null

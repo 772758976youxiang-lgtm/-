@@ -41,7 +41,10 @@
     "direct_message": "allow",
     "group_message": "allow",
     "group_whitelist": [],
+    "group_blacklist": [],
     "direct_whitelist": [],
+    "direct_blacklist": [],
+    "group_reply_only_when_mentioned": false,
     "sensitive_words": [],
     "rate_limit_per_minute": 10
   },

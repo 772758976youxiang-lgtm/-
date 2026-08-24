@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import re
 import queue
 import threading
 import time
@@ -60,9 +61,13 @@ class Policy:
         if message.conversation_type == "direct":
             mode = self.config.get("direct_message", "allow")
             whitelist = set(str(value) for value in (self.config.get("direct_whitelist") or []))
+            blacklist = set(str(value) for value in (self.config.get("direct_blacklist") or []))
         else:
             mode = self.config.get("group_message", "whitelist")
             whitelist = set(str(value) for value in (self.config.get("group_whitelist") or []))
+            blacklist = set(str(value) for value in (self.config.get("group_blacklist") or []))
+        if message.conversation_id in blacklist:
+            return False, "conversation is blacklisted"
         if mode == "deny":
             return False, "conversation type denied"
         if mode == "whitelist" and message.conversation_id not in whitelist:
@@ -197,12 +202,6 @@ class WeChatChannelService:
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
             self.log("debug", "unsupported_message", "ignored non-text or empty message", {"message_id": message.message_id, "message_type": message.message_type})
             return
-        allowed, reason = self.policy.allow(message)
-        if not allowed:
-            self.store.mark_processed(message.message_id, message.conversation_id, message.to_dict())
-            self.store.set_cursor(raw.conversation_id, raw.sort_seq)
-            self.log("warning", "policy", reason, {"message_id": message.message_id, "conversation_id": message.conversation_id})
-            return
         conversation_profile = self.receive.contact_profile(message.conversation_id)
         sender_profile = self.receive.contact_profile(message.sender_id)
         metadata = {
@@ -220,6 +219,24 @@ class WeChatChannelService:
             "sender_remark": sender_profile.get("remark") or "",
             "sender_wechat_id": sender_profile.get("wechat_id") or "",
         }
+        quote = self._quote_context(message.content)
+        if quote:
+            metadata.update(quote)
+        allowed, reason = self.policy.allow(message)
+        mentioned = self.receive.mentions_self(raw.content) if message.conversation_type == "group" else False
+        if allowed and message.conversation_type == "group" and bool(self.config["policy"].get("group_reply_only_when_mentioned", False)) and not mentioned:
+            allowed, reason = False, "group message does not mention account"
+        record = message.to_dict()
+        record["context"] = metadata
+        record["reply_allowed"] = allowed
+        record["policy_reason"] = reason
+        record["mentioned"] = mentioned
+        if not allowed:
+            self.store.mark_processed(message.message_id, message.conversation_id, record)
+            self.store.set_cursor(raw.conversation_id, raw.sort_seq)
+            self.events.publish("context", {"message": record})
+            self.log("info", "context", "message recorded without reply", {"message_id": message.message_id, "conversation_id": message.conversation_id, "reason": reason})
+            return
         adapter = EchoAgentAdapter() if self._echo else self.agent
         session_id = adapter.get_or_create_session(message.conversation_key, metadata)
         reply = adapter.respond(session_id, message, metadata)
@@ -230,10 +247,17 @@ class WeChatChannelService:
         task = SendTask(message.conversation_id, reply.text, message.message_id, message.message_id + ":reply")
         if self.store.create_send_task(task.to_dict()):
             self._send_queue.put(task)
-        self.store.mark_processed(message.message_id, message.conversation_id, message.to_dict())
+        self.store.mark_processed(message.message_id, message.conversation_id, record)
         self.store.set_cursor(raw.conversation_id, raw.sort_seq)
-        self.events.publish("message", {"message": message.to_dict(), "session_id": reply.session_id})
+        self.events.publish("message", {"message": record, "session_id": reply.session_id})
         self.log("info", "message", "message routed to agent", {"message_id": message.message_id, "session_id": reply.session_id})
+
+    @staticmethod
+    def _quote_context(content: str) -> Dict[str, str]:
+        match = re.match(r"^(.*?)\n(?:引用|回复)\s*(.*?)\s*的消息\s*[:：]\s*(.+)$", str(content or ""), re.S)
+        if not match:
+            return {}
+        return {"quoted_message": match.group(3).strip(), "quoted_sender": match.group(2).strip()}
 
     def _send_loop(self) -> None:
         while not self._stop.is_set():
