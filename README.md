@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.20）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.21）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -42,6 +42,8 @@ v0.3.17 在连接规则面板增加唯一“预设写入权限人”。只有该
 v0.3.18 为微信群机器人增加原生群成员 @：群回复默认真实 @ 原消息发送者，使用扩展的本机 Hook `SendAtText` 接口直接写入微信消息 `atlist`，不打开或聚焦微信窗口。若 Hook 未加载该接口，@ 任务会停止并报告失败，不会偷偷降级为 UIA/OCR 或普通文本。
 
 v0.3.20 改为 Harness 全程托管微信通道：开关不再强制结束任何微信进程，而是持续检测并直接接管已运行的微信；只有在微信未运行且 `runtime.wechatStartupMode` 为默认的 `auto` 时，Harness 才会启动登录窗口。将该项设为 `attach` 则只接管手动启动的微信。Harness 启动和后续巡检均会校验 Python 依赖，缺失时按 `wechat_channel/requirements.txt` 自动补齐，并正确兼容 Python 3.14 对可选 `zstandard` 的环境标记。
+
+v0.3.21 修复数据库旧缓存导致的“假连接”：连接状态必须同时满足数据库可读和 Hook 已登录。Harness 检测到 Hook 未登录、微信无可见窗口的残留进程时，会只清理这些明确失效的 PID，再拉起真实登录窗口，不影响已经登录或有可见窗口的微信。
 
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 

@@ -564,6 +564,41 @@ async function isWeChatProcessRunning() {
   return /WeChat\.exe/i.test(legacy.stdout);
 }
 
+async function readWechatProcessSnapshot() {
+  if (process.platform !== "win32") return [];
+  const script = [
+    "$items = Get-Process -Name Weixin,WeChat -ErrorAction SilentlyContinue | ForEach-Object {",
+    "  [pscustomobject]@{ pid = $_.Id; visible = ($_.MainWindowHandle -ne 0); title = $_.MainWindowTitle }",
+    "}",
+    "@($items) | ConvertTo-Json -Compress",
+  ].join("\n");
+  const result = await capture("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], 10000);
+  if (result.code !== 0 || !result.stdout.trim()) return [];
+  try {
+    const parsed = JSON.parse(result.stdout);
+    return (Array.isArray(parsed) ? parsed : [parsed]).map((item) => ({
+      pid: Number(item?.pid || 0),
+      visible: !!item?.visible,
+      title: String(item?.title || ""),
+    })).filter((item) => item.pid > 0);
+  } catch { return []; }
+}
+
+function readWechatHookLogin(service) {
+  const hook = Array.isArray(service?.send) ? service.send.find((item) => item?.driver === "aixed_hook") : null;
+  const raw = hook?.details?.status?.IsLogin;
+  if (raw === undefined || raw === null || raw === "") return null;
+  return Number(raw) === 1;
+}
+
+async function closeStaleWechatProcesses(snapshot) {
+  const stale = snapshot.filter((item) => !item.visible && item.pid > 0);
+  for (const item of stale) {
+    const result = await capture("taskkill.exe", ["/PID", String(item.pid), "/T", "/F"], 10000);
+    if (result.code === 0) log(`[微信托管] 已清理无窗口且未登录的残留进程 PID=${item.pid}`);
+  }
+}
+
 function findWeChatExecutable(settings = {}) {
   if (process.platform !== "win32") return "";
   const candidates = [
@@ -598,8 +633,16 @@ async function reconcileWechatChannel(cfg) {
   try {
     ensureWechatPresetConfig(cfg);
     await ensureWechatPythonDependencies();
-    const processRunning = await isWeChatProcessRunning();
-    if (processRunning) {
+    const [snapshot, service] = await Promise.all([readWechatProcessSnapshot(), readWechatServiceStatus(cfg)]);
+    const processRunning = snapshot.length > 0 || await isWeChatProcessRunning();
+    const hookLogin = readWechatHookLogin(service);
+    const hasVisibleWindow = snapshot.some((item) => item.visible);
+    const launchGraceExpired = !wechatLaunchState.launchedAt || Date.now() - wechatLaunchState.launchedAt > 30000;
+    if (processRunning && hookLogin === false && !hasVisibleWindow && launchGraceExpired) {
+      wechatLaunchState.action = "recovering_stale_process";
+      await closeStaleWechatProcesses(snapshot);
+      await launchWeChatLoginWindow(settings);
+    } else if (processRunning) {
       wechatLaunchState.action = "attached";
       wechatLaunchState.lastError = "";
     } else if (settings.startupMode === "auto") {
@@ -721,7 +764,9 @@ async function getWechatControlStatus() {
   const [processRunning, service] = await Promise.all([isWeChatProcessRunning(), readWechatServiceStatus(cfg)]);
   const state = cfg ? wechatState.get(cfg.id) : null;
   const serviceRunning = !!service?.running;
-  const loggedIn = !!service?.receive?.ok;
+  const hookLogin = readWechatHookLogin(service);
+  // 数据库可读可能只是旧账号缓存；Hook 明确未登录时不能显示为已连接。
+  const loggedIn = !!service?.receive?.ok && hookLogin === true;
   if (state) {
     state.connected = serviceRunning;
     state.loggedIn = loggedIn;
@@ -743,6 +788,7 @@ async function getWechatControlStatus() {
     processRunning,
     serviceRunning,
     loggedIn,
+    hookLoggedIn: hookLogin,
     executable: wechatLaunchState.executable || findWeChatExecutable(readWechatStartupSettings(cfg)),
     launchedAt: wechatLaunchState.launchedAt || null,
     startupMode: wechatLaunchState.startupMode,
