@@ -1,0 +1,59 @@
+{
+  "service": {
+    "host": "127.0.0.1",
+    "port": 5176,
+    "token_env": "WECHAT_CHANNEL_TOKEN"
+  },
+  "channel": {
+    "type": "wechat_pc",
+    "account_id": "auto",
+    "poll_interval_ms": 1500,
+    "recent_conversation_limit": 15,
+    "message_limit_per_conversation": 3
+  },
+  "receive": {
+    "driver": "wechatauto_db",
+    "package": "wechatauto-replica",
+    "version": "1.1.7",
+    "repository": "https://github.com/fanyuantaier/wechatauto-replica"
+  },
+  "send": {
+    "primary": "aixed_hook",
+    "hook_endpoint": "http://127.0.0.1:30001",
+    "hook_wechat_version": "4.1.10.27",
+    "hook_repository": "https://github.com/aixed/WeChat-Hook",
+    "fallbacks": ["wechatauto_uia", "wechatauto_ocr"],
+    "fallback_repository": "https://github.com/fanyuantaier/wechatauto-replica",
+    "timeout_seconds": 90,
+    "max_retries": 2
+  },
+  "agent": {
+    "adapter": "dsh",
+    "endpoint": "http://127.0.0.1:3080",
+    "token_env": "AGENT_TOKEN",
+    "session_scope": "conversation",
+    "workspace_dir": "",
+    "preset": "channel-wechat-personal",
+    "reply_timeout_seconds": 90
+  },
+  "policy": {
+    "enabled": true,
+    "direct_message": "allow",
+    "group_message": "allow",
+    "group_whitelist": [],
+    "group_blacklist": [],
+    "direct_whitelist": [],
+    "direct_blacklist": [],
+    "group_reply_only_when_mentioned_groups": [],
+    "profile_write_authorized_contact": "",
+    "sensitive_words": [],
+    "rate_limit_per_minute": 10
+  },
+  "state": {
+    "database": "~/.dsh-wechat-channel.sqlite3",
+    "recent_context_limit": 200
+  },
+  "runtime": {
+    "echo": false
+  }
+}

@@ -13,6 +13,8 @@ assert.equal(pkg.packageManager, "pnpm@11.19.0");
 assert.equal(pkg.dependencies?.["dingtalk-stream-sdk-nodejs"], "2.0.4");
 assert.equal(pkg.peerDependenciesMeta?.["@deepseek-ai/cordis"]?.optional, true);
 assert.match(pkg.scripts?.prepack ?? "", /npm test/);
+assert.match(pkg.scripts?.prepack ?? "", /clean-python-cache\.mjs/);
+assert.match(pkg.scripts?.["test:wechat"] ?? "", /run-python-tests\.mjs/);
 assert.match(pkg.scripts?.["verify:install"] ?? "", /verify-overrides\.mjs/);
 
 const bundle = read("bundle/dsh-channel-im.cordis.yml");
@@ -23,20 +25,88 @@ assert.equal((bundle.match(/@deepseek-ai\/dsh-channel-im/g) ?? []).length, 1);
 const serverPlugin = await import(pathToFileURL(path.join(root, "lib/index.js")));
 assert.equal(typeof serverPlugin.apply, "function");
 assert.equal(serverPlugin.name, "dsh-channel-im");
+assert.equal(serverPlugin.configSchema.properties.wechatPython.type, "string");
+assert.equal(serverPlugin.configSchema.properties.wechatConfig.type, "string");
+assert.equal(serverPlugin.configSchema.properties.wechatExecutable.type, "string");
+assert.deepEqual(serverPlugin.inject, ["tools"]);
 
 const client = read("lib/client.js");
 assert.match(client, /exports\.inject\s*=\s*\["slots"\]/);
 assert.match(client, /name:\s*"settings\.section"/);
+assert.match(client, /c\.mode === "wechat_pc"/);
+assert.match(client, /connectedBots\.map/);
+assert.match(client, /bot\.account&&bot\.account\.nickname|bot\.account && bot\.account\.nickname/);
+assert.match(client, /连接后可在这里配置通道/);
+assert.match(client, /configure: "配置"/);
+assert.doesNotMatch(client, /Harness 托管/);
+assert.doesNotMatch(client, /群聊、联系人与预设权限/);
+assert.doesNotMatch(client, /等待扫码登录/);
+assert.doesNotMatch(client, /role:\s*"switch"/);
+assert.doesNotMatch(client, /"aria-checked"/);
+assert.doesNotMatch(client, /api\/wechat\/toggle/);
 
 const server = read("server.mjs");
 assert.match(server, /ensureConfigFile\(\)/);
 assert.match(server, /httpServer\.listen\(BRIDGE_PORT,\s*"127\.0\.0\.1"/);
+assert.match(server, /startWechatChannel/);
+assert.match(server, /"wechat_pc"/);
+assert.match(server, /launchWeChatLoginWindow/);
+assert.match(server, /ensureWechatPythonDependencies/);
+assert.match(server, /WECHAT_BOTS_ROOT/);
+assert.match(server, /nextWechatPort/);
+assert.match(server, /WECHAT_LOGIN_TIMEOUT_MS = 3 \* 60 \* 1000/);
+assert.match(server, /WECHAT_ONBOARDING_POLL_MS = 5000/);
+assert.match(server, /setInterval\(\(\) => onboardingTick\(cfg\.id\), WECHAT_ONBOARDING_POLL_MS\)/);
+assert.match(server, /onboardingPhase: "login_timeout"/);
+assert.match(server, /probeWechat\("all_windows"\)/);
+assert.match(server, /newWindow\.state !== "main"/);
+assert.match(server, /item\.accountId && !item\.enabled/);
+assert.match(server, /resumePendingWechatOnboarding/);
+assert.match(server, /cleanupOrphanChannelPresets/);
+assert.match(server, /preset-archive/);
+assert.match(server, /cfg\?\.accountId \|\| cfg\?\.expectedAccountId/);
+assert.match(server, /微信账号尚未识别时不创建空壳预设/);
+assert.match(server, /状态查询同时承担账号预设自愈/);
+assert.match(server, /不关闭、不结束、不接管任何微信进程/);
+assert.doesNotMatch(server, /taskkill\.exe/);
+assert.doesNotMatch(server, /Get-Process -Name Weixin/);
+assert.doesNotMatch(server, /reconcileWechatChannel/);
+assert.match(server, /path === "\/api\/wechat\/status"/);
+assert.match(server, /path === "\/api\/wechat\/setup"/);
+assert.match(server, /path === "\/api\/wechat\/stop"/);
+assert.match(server, /path === "\/api\/wechat\/send"/);
+assert.match(server, /TEMP: tempRoot/);
+assert.match(server, /cwd: runtimeRoot/);
+assert.match(server, /resolveWechatContact/);
+assert.match(server, /detectWechatHookEndpoint/);
+assert.match(server, /Hook \$\{hookEndpoint\} → UIA\/OCR/);
+assert.match(server, /DSH_CHANNEL_MANAGEMENT_TOKEN/);
+assert.match(server, /通道生命周期只能由本机 Harness Agent 管理/);
 assert.doesNotMatch(server, /\{\s*\.\.\.c,\s*status:/);
+
+const tool = read("lib/index.js");
+assert.match(tool, /startWechatProgressMonitor/);
+assert.match(tool, /setInterval\(check, 5000\)/);
+assert.match(tool, /3 分钟内自行监控登录状态/);
+assert.match(tool, /bot\.phase === "login_timeout"/);
+assert.match(tool, /confirm_wechat_ready/);
+assert.match(tool, /现在直接调用 im_channel_manage\(status\)/);
+assert.doesNotMatch(tool, /bot\.phase === "connected"[\s\S]{0,300}clearInterval/);
+assert.match(tool, /\/api\/wechat\/setup/);
+assert.match(tool, /send_wechat_message/);
+assert.match(tool, /\/api\/wechat\/send/);
+assert.doesNotMatch(tool, /\/api\/wechat\/toggle/);
 
 const installer = read("scripts/install-assets.mjs");
 assert.match(installer, /discoverPackageDirs/);
 assert.match(installer, /copyDirectoryWithBackup/);
+assert.match(installer, /installRuntimeLaunchers/);
 assert.doesNotMatch(installer, /fs\.isDirectorySync/);
+
+const auth = read("auth.mjs");
+assert.match(auth, /dws\.exe/);
+assert.match(auth, /DSH_CHANNEL_MANAGEMENT_TOKEN/);
+assert.match(read("skills/im-channel-setup.md"), /im_channel_manage/);
 
 for (const packageName of [
   "dsh-api-remotes",

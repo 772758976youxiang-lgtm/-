@@ -1,0 +1,136 @@
+diff --git a/include/SendTextMsg.h b/include/SendTextMsg.h
+--- a/include/SendTextMsg.h
++++ b/include/SendTextMsg.h
+@@ -3,3 +3,4 @@
+ namespace httplib { class Server; }
+ 
+ void Route_SendTextMsg(httplib::Server& svr);
++void Route_SendAtText(httplib::Server& svr);
+diff --git a/include/wx_send.h b/include/wx_send.h
+--- a/include/wx_send.h
++++ b/include/wx_send.h
+@@ -4,6 +4,8 @@
+ namespace WeixinSend
+ {
+     void SendImage(const std::string& wxid, const std::string& imgPath);
+-    void SendText(const std::string& wxidorgid, const std::string& msg);
++    // atlist is a comma-separated list of group member wxids.  It is left
++    // empty for ordinary messages.
++    void SendText(const std::string& wxidorgid, const std::string& msg, const std::string& atlist = "");
+     void DecodePic(const std::string& enc_pic_path, const std::string& dec_pic_path);
+ }
+diff --git a/src/http_routes.cpp b/src/http_routes.cpp
+--- a/src/http_routes.cpp
++++ b/src/http_routes.cpp
+@@ -9,6 +9,7 @@ void RegisterRoutes(httplib::Server& svr)
+ void RegisterRoutes(httplib::Server& svr)
+ {
+     Route_SendTextMsg(svr);
++    Route_SendAtText(svr);
+     RegisterGetSelfProfile(svr);
+     Route_ForwardXMLMsg(svr);
+     Route_SendImageMsg(svr);
+diff --git a/src/wx_send.cpp b/src/wx_send.cpp
+--- a/src/wx_send.cpp
++++ b/src/wx_send.cpp
+@@ -406,7 +406,8 @@ namespace WeixinSend
+ 
+ 
+ 
+-    void BuildTextMessage(uint64_t* ptr, const std::string& text, const std::string& wxid)
++    void BuildTextMessage(uint64_t* ptr, const std::string& text, const std::string& wxid,
++                          const std::string& atlist)
+     {
+         uintptr_t base = GetWeixinDllBase();
+ 
+@@ -422,6 +423,10 @@ namespace WeixinSend
+ 
+         SetWeixinString(&msg->receiver, wxid);
+         SetWeixinString(&msg->content, text);
++        if (!atlist.empty())
++        {
++            SetWeixinString(&msg->atlist, atlist);
++        }
+         msg->msg_len = text.length();
+         msg->type = 1;
+     }
+@@ -470,13 +475,13 @@ namespace WeixinSend
+         );
+     }
+ 
+-    void SendText(const std::string& wxidorgid, const std::string& msg)
++    void SendText(const std::string& wxidorgid, const std::string& msg, const std::string& atlist)
+     {
+         uintptr_t base = GetWeixinDllBase();
+ 
+ 		//不同版本需要调整 msgBuf 大小，过小会导致发送失败，过大会浪费内存 
+         uint64_t* msgBuf = HeapAlloc_mb<uint64_t>(0x768);
+-        BuildTextMessage(msgBuf, msg, wxidorgid);
++        BuildTextMessage(msgBuf, msg, wxidorgid, atlist);
+ 
+         uint64_t* data = HeapAlloc_mb<uint64_t>(0x20);
+         data[0] = (uint64_t)(msgBuf + 2);
+diff --git a/src/SendTextMsg.cpp b/src/SendTextMsg.cpp
+--- a/src/SendTextMsg.cpp
++++ b/src/SendTextMsg.cpp
+@@ -72,3 +72,60 @@ void Route_SendTextMsg(httplib::Server& svr)
+         });
+ 
+ }
++
++void Route_SendAtText(httplib::Server& svr)
++{
++    svr.Post("/SendAtText", [](const httplib::Request& req, httplib::Response& res)
++        {
++            json reqJson;
++            json resp;
++            try
++            {
++                reqJson = json::parse(req.body);
++            }
++            catch (...)
++            {
++                resp["ret"] = -1;
++                resp["retmsg"] = "invalid json";
++                res.set_content(resp.dump(), "application/json");
++                return;
++            }
++
++            const std::string wxidorgid = reqJson.value("wxidorgid", "");
++            const std::string msg = reqJson.value("msg", "");
++            std::string atlist;
++            if (reqJson.contains("atlist") && reqJson["atlist"].is_string())
++            {
++                atlist = reqJson["atlist"].get<std::string>();
++            }
++            else if (reqJson.contains("wxids") && reqJson["wxids"].is_string())
++            {
++                atlist = reqJson["wxids"].get<std::string>();
++            }
++            if (atlist.empty() && reqJson.contains("wxids") && reqJson["wxids"].is_array())
++            {
++                bool first = true;
++                for (const auto& value : reqJson["wxids"])
++                {
++                    if (!value.is_string() || value.get<std::string>().empty()) continue;
++                    if (!first) atlist += ",";
++                    atlist += value.get<std::string>();
++                    first = false;
++                }
++            }
++
++            if (wxidorgid.empty() || msg.empty() || atlist.empty() ||
++                wxidorgid.find("@chatroom") == std::string::npos)
++            {
++                resp["ret"] = -1;
++                resp["retmsg"] = "wxidorgid (group), msg and wxids are required";
++                res.set_content(resp.dump(), "application/json");
++                return;
++            }
++
++            WeixinSend::SendText(wxidorgid, msg, atlist);
++            resp["ret"] = 0;
++            resp["retmsg"] = "success";
++            res.set_content(resp.dump(), "application/json");
++        });
++}

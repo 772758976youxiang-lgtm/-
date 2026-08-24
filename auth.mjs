@@ -4,10 +4,14 @@
 //   node auth.mjs status    -> 打印当前已登录账号（profile）列表
 //   node auth.mjs --profile <corp:user>   （可选，配合 login 指定授权目标组织）
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const DWS_BIN = process.env.DWS_BIN || path.join(os.homedir(), ".local", "bin", "dws");
+const DWS_BIN = process.env.DWS_BIN || [
+  path.join(os.homedir(), ".local", "bin", process.platform === "win32" ? "dws.exe" : "dws"),
+  process.platform === "win32" ? "dws.exe" : "dws",
+].find((candidate) => !path.isAbsolute(candidate) || fs.existsSync(candidate));
 const NOW = () => new Date().toISOString().slice(11, 19);
 
 function run(args, timeoutMs = 20000) {
@@ -61,7 +65,10 @@ async function login() {
       try {
         const acctId = (found.user || "u").replace(/[^A-Za-z0-9_-]/g, "").slice(-10) || "u";
         const regBody = { id: `dingtalk-person-${acctId}`, platform: "dingtalk", name: `钉钉-${found.userName || found.user}-数字人`, mode: "dws", profile: found.profile, ignoreSenders: ["harness"], enabled: true };
-        const rr = await fetch("http://127.0.0.1:5175/api/channels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(regBody) });
+        const managementToken = process.env.DSH_CHANNEL_MANAGEMENT_TOKEN || "";
+        const rr = await fetch("http://127.0.0.1:5175/api/channels", { method: "POST", headers: {
+          "Content-Type": "application/json", Authorization: `Bearer ${managementToken}`,
+        }, body: JSON.stringify(regBody) });
         const rj = await rr.json().catch(() => ({}));
         console.log(`[自动注册] ${rj.ok ? "OK " + rj.id : "FAIL " + (rj.error || JSON.stringify(rj))}`);
       } catch (e) { console.log("[自动注册失败]", e?.message ?? e); }
