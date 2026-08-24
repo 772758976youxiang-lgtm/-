@@ -49,6 +49,9 @@ class ReceiveDriver(ABC):
     def contacts(self, limit: int = 100) -> List[Dict[str, Any]]:
         return []
 
+    def contact_profile(self, target_id: str) -> Dict[str, str]:
+        return {"id": str(target_id or "")}
+
 
 class SendDriver(ABC):
     name = "send"
@@ -172,6 +175,46 @@ class WeChatDbReceiveDriver(ReceiveDriver):
         except Exception:
             return target_id
 
+    def contact_profile(self, target_id: str) -> Dict[str, str]:
+        """Return the best local identity record without requiring UI automation.
+
+        ``username`` is the stable internal conversation/member ID; ``alias`` is
+        the user-facing WeChat ID when it is present in contact.db.
+        """
+        target = str(target_id or "")
+        profile = {"id": target, "username": target, "nickname": "", "remark": "", "wechat_id": ""}
+        if not target:
+            return profile
+        try:
+            db = self._database()
+            matches = db.search_contact(target) or []
+            match = next((item for item in matches if str(item.get("username") or "") == target), None)
+            if match:
+                profile["nickname"] = str(match.get("nick_name") or "")
+                profile["remark"] = str(match.get("remark") or "")
+            # wechatauto exposes nickname/remark publicly. Alias is available in
+            # the same decrypted contact DB, but not in its public search result.
+            for entry in getattr(db, "_db_files", []) or []:
+                relative, db_path = entry[0], entry[1]
+                if str(db_path).replace("\\", "/").endswith("/contact.db"):
+                    connection = db._open(relative)
+                    try:
+                        row = connection.execute(
+                            "SELECT username,nick_name,remark,alias FROM contact WHERE username=? LIMIT 1", (target,)
+                        ).fetchone()
+                    finally:
+                        connection.close()
+                    if row:
+                        profile["username"] = str(row["username"] or target)
+                        profile["nickname"] = str(row["nick_name"] or profile["nickname"])
+                        profile["remark"] = str(row["remark"] or profile["remark"])
+                        profile["wechat_id"] = str(row["alias"] or "")
+                    break
+        except Exception:
+            pass
+        profile["display_name"] = profile["remark"] or profile["nickname"] or profile["wechat_id"] or target
+        return profile
+
     def contacts(self, limit: int = 100) -> List[Dict[str, Any]]:
         db = self._database()
         result = []
@@ -179,11 +222,15 @@ class WeChatDbReceiveDriver(ReceiveDriver):
             username = str(session.get("username") or "")
             if not username:
                 continue
-            try:
-                name = str(db.get_nickname(username) or username)
-            except Exception:
-                name = username
-            result.append({"id": username, "name": name, "type": "group" if "@chatroom" in username else "direct"})
+            profile = self.contact_profile(username)
+            result.append({
+                "id": username,
+                "name": profile.get("display_name") or username,
+                "type": "group" if "@chatroom" in username else "direct",
+                "nickname": profile.get("nickname") or "",
+                "remark": profile.get("remark") or "",
+                "wechat_id": profile.get("wechat_id") or "",
+            })
         return result
 
 

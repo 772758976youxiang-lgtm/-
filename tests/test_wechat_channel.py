@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from wechat_channel.agents import EchoAgentAdapter
+from wechat_channel.agents import DshAgentAdapter, EchoAgentAdapter
 from wechat_channel.config import DEFAULT_CONFIG, load_config
 from wechat_channel.drivers import SendDriver, SendRouter, WeChatDbReceiveDriver, parse_group_content
 from wechat_channel.http_api import ManagementServer
@@ -39,6 +39,9 @@ class FakeDb:
 
     def get_nickname(self, user):
         return "Friend" if user == "friend" else user
+
+    def search_contact(self, keyword):
+        return [{"username": "friend", "nick_name": "Friend Nick", "remark": "Friend Remark"}] if keyword == "friend" else []
 
 
 class FakeSendDriver(SendDriver):
@@ -73,6 +76,27 @@ class WeChatChannelTests(unittest.TestCase):
         receive = WeChatDbReceiveDriver(self.store, db_factory=lambda **_: db)
         raw = receive.poll()
         self.assertEqual(raw.baseline_conversations, ["friend"])
+
+    def test_default_policy_allows_groups_and_contact_profile_keeps_identity_fields(self):
+        db = FakeDb()
+        receive = WeChatDbReceiveDriver(self.store, db_factory=lambda **_: db)
+        profile = receive.contact_profile("friend")
+        self.assertEqual(profile["nickname"], "Friend Nick")
+        self.assertEqual(profile["remark"], "Friend Remark")
+        message = StandardMessage("m", "wechat", "a", "group@chatroom", "group", "member", "text", "hello", 1)
+        allowed, reason = Policy(copy.deepcopy(DEFAULT_CONFIG)["policy"]).allow(message)
+        self.assertTrue(allowed, reason)
+
+    def test_dsh_prompt_includes_group_and_sender_identity(self):
+        message = StandardMessage("m", "wechat", "a", "group@chatroom", "group", "member", "text", "hello", 1)
+        prompt = DshAgentAdapter._contextual_prompt(message, {
+            "conversation_name": "测试群", "sender_name": "张三", "sender_remark": "三哥", "sender_wechat_id": "zhangsan",
+        })
+        self.assertIn("会话名称：测试群", prompt)
+        self.assertIn("发送者：张三", prompt)
+        self.assertIn("发送者备注：三哥", prompt)
+        self.assertIn("发送者微信号：zhangsan", prompt)
+        self.assertTrue(prompt.endswith("【用户消息】\nhello"))
 
     def test_first_poll_establishes_baseline_and_does_not_reply_history(self):
         db = FakeDb()

@@ -41,3 +41,4 @@ Hook 的 `/QueryDB/status` 在本机返回 `IsLogin=0`，但 Hook 实发和数�
 - 健康状态探测采用 12 秒上限、3 秒缓存和并发单飞；Python 管理 API 忽略客户端提前断开，避免轮询产生异常堆栈。
 - 真实故障回归：`wechatauto-replica` 返回 `type="文本"` 时会归一化为 `text` 并进入 AgentAdapter，不再记为 `unsupported_message`。
 - 安装回归：postinstall 会创建 `~/.dsh-channel-im/auth.mjs`、`server.mjs` 与 `package-root.txt`，Windows 真人扫码入口可直接定位 `~/.local/bin/dws.exe`。
+- 身份上下文回归：默认策略允许群聊；会话与发送者的昵称、备注、微信号（alias，可用时）会注入 DSH Agent 消息上下文，群聊使用群名称作为会话标题。

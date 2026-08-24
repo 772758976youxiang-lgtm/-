@@ -203,12 +203,22 @@ class WeChatChannelService:
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
             self.log("warning", "policy", reason, {"message_id": message.message_id, "conversation_id": message.conversation_id})
             return
+        conversation_profile = self.receive.contact_profile(message.conversation_id)
+        sender_profile = self.receive.contact_profile(message.sender_id)
         metadata = {
             "channel": "wechat",
             "account_id": message.account_id,
             "conversation_id": message.conversation_id,
             "conversation_type": message.conversation_type,
             "sender_id": message.sender_id,
+            "conversation_name": conversation_profile.get("display_name") or message.conversation_id,
+            "conversation_nickname": conversation_profile.get("nickname") or "",
+            "conversation_remark": conversation_profile.get("remark") or "",
+            "conversation_wechat_id": conversation_profile.get("wechat_id") or "",
+            "sender_name": sender_profile.get("display_name") or message.sender_id,
+            "sender_nickname": sender_profile.get("nickname") or "",
+            "sender_remark": sender_profile.get("remark") or "",
+            "sender_wechat_id": sender_profile.get("wechat_id") or "",
         }
         adapter = EchoAgentAdapter() if self._echo else self.agent
         session_id = adapter.get_or_create_session(message.conversation_key, metadata)

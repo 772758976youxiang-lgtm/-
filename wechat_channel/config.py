@@ -44,7 +44,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "policy": {
         "direct_message": "allow",
-        "group_message": "whitelist",
+        "group_message": "allow",
         "group_whitelist": [],
         "direct_whitelist": [],
         "sensitive_words": [],

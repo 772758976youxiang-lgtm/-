@@ -183,12 +183,29 @@ class DshAgentAdapter(AgentAdapter):
         history = self._rpc("session.history", {"sessionId": session_id, "maxMessages": 10})
         return max((int(item.get("event", {}).get("seq") or 0) for item in (history.get("events") or [])), default=0)
 
+    @staticmethod
+    def _contextual_prompt(message: StandardMessage, metadata: Dict[str, Any]) -> str:
+        kind = "群聊" if message.conversation_type == "group" else "私聊"
+        lines = [
+            "【微信消息上下文】",
+            "会话类型：" + kind,
+            "会话名称：" + str(metadata.get("conversation_name") or message.conversation_id),
+            "会话 ID：" + message.conversation_id,
+            "发送者：" + str(metadata.get("sender_name") or message.sender_id),
+            "发送者 ID：" + message.sender_id,
+        ]
+        for label, key in (("会话备注", "conversation_remark"), ("会话微信号", "conversation_wechat_id"),
+                           ("发送者备注", "sender_remark"), ("发送者微信号", "sender_wechat_id")):
+            if metadata.get(key):
+                lines.append(label + "：" + str(metadata[key]))
+        return "\n".join(lines) + "\n【用户消息】\n" + message.content
+
     def respond(self, session_id: str, message: StandardMessage, metadata: Dict[str, Any]) -> AgentReply:
         with self._lock:
             session_lock = self._session_locks.setdefault(session_id, threading.Lock())
         with session_lock:
             baseline = self._history_max_seq(session_id)
-            self._rpc("session.prompt", {"sessionId": session_id, "mode": "queue", "content": [{"type": "text", "text": message.content}]})
+            self._rpc("session.prompt", {"sessionId": session_id, "mode": "queue", "content": [{"type": "text", "text": self._contextual_prompt(message, metadata)}]})
             deadline = time.time() + self.timeout
             best = ""
             last_seq = baseline
@@ -228,4 +245,3 @@ def make_agent_adapter(config: Dict[str, Any], store: StateStore) -> AgentAdapte
         return DshAgentAdapter(str(settings["endpoint"]), store, str(settings.get("workspace_dir") or ""),
                                str(settings.get("preset") or "robot-assistant"), timeout)
     raise ValueError("unsupported agent adapter: " + kind)
-

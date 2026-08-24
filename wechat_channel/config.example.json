@@ -39,7 +39,7 @@
   "policy": {
     "enabled": true,
     "direct_message": "allow",
-    "group_message": "whitelist",
+    "group_message": "allow",
     "group_whitelist": [],
     "direct_whitelist": [],
     "sensitive_words": [],

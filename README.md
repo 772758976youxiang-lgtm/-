@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.5）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.6）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -31,7 +31,7 @@ dsh plugin --profile web install git+ssh://git@github.com:772758976youxiang-lgtm
 
 源码直接运行 `server.mjs` 前先执行 `npm install --ignore-scripts`；`--ignore-scripts` 可避免开发依赖安装阶段重复应用运行包 overrides。
 
-v0.3.5 补齐 postinstall 承诺的 `~/.dsh-channel-im/auth.mjs`、`server.mjs` 与 `package-root.txt` 稳定入口，并修正 Windows `dws.exe` 探测；真人扫码不再依赖源码目录或不存在的 `install.sh`。v0.3.4 已在「设置 → 连接」增加微信个人号开关，并统一归一化 `文本/text/1` 等消息类型。
+v0.3.6 默认允许全部微信群聊，并把本地微信数据库中的会话/成员昵称、备注、微信号（alias，可用时）和群名称自动注入 Agent 上下文。v0.3.5 补齐 postinstall 承诺的稳定真人扫码入口；v0.3.4 已在「设置 → 连接」增加微信个人号开关。
 
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
