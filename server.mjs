@@ -663,11 +663,12 @@ async function updateWechatRules(policy) {
     group_message: modes.has(policy?.group_message) ? policy.group_message : "allow",
     direct_whitelist: cleanList(policy?.direct_whitelist), direct_blacklist: cleanList(policy?.direct_blacklist),
     group_whitelist: cleanList(policy?.group_whitelist), group_blacklist: cleanList(policy?.group_blacklist),
-    group_reply_only_when_mentioned: !!policy?.group_reply_only_when_mentioned,
+    group_reply_only_when_mentioned_groups: cleanList(policy?.group_reply_only_when_mentioned_groups),
   };
   const file = cfg.configFile || DEFAULT_WECHAT_CONFIG;
   let custom = {};
   try { custom = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+  if (custom.policy) delete custom.policy.group_reply_only_when_mentioned;
   custom.policy = { ...(custom.policy || {}), ...next };
   fs.writeFileSync(file, JSON.stringify(custom, null, 2));
   stopWechatChannel(cfg.id); startWechatChannel(cfg);

@@ -188,6 +188,17 @@ class StateStore:
             for row in rows
         ]
 
+    def prune_recent_messages(self, limit: int = 200) -> None:
+        """Keep the newest channel context records only."""
+        limit = max(1, min(int(limit), 10000))
+        with self._lock, self._db:
+            self._db.execute(
+                "DELETE FROM processed_messages WHERE message_id IN "
+                "(SELECT message_id FROM processed_messages "
+                "ORDER BY processed_at DESC, rowid DESC LIMIT -1 OFFSET ?)",
+                (limit,),
+            )
+
     def close(self) -> None:
         with self._lock:
             self._db.close()

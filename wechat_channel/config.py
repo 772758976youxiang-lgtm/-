@@ -49,12 +49,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "group_blacklist": [],
         "direct_whitelist": [],
         "direct_blacklist": [],
-        "group_reply_only_when_mentioned": False,
+        "group_reply_only_when_mentioned_groups": [],
         "sensitive_words": [],
         "rate_limit_per_minute": 10,
         "enabled": True,
     },
-    "state": {"database": str(Path.home() / ".dsh-wechat-channel.sqlite3")},
+    "state": {"database": str(Path.home() / ".dsh-wechat-channel.sqlite3"), "recent_context_limit": 200},
     "runtime": {"echo": False},
 }
 

@@ -198,7 +198,7 @@ class WeChatChannelService:
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
             return
         if message.message_type.lower() not in ("text", "1", "文本", "文字", "文字消息") or not message.content.strip():
-            self.store.mark_processed(message.message_id, message.conversation_id, message.to_dict())
+            self._record_processed(message.message_id, message.conversation_id, message.to_dict())
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
             self.log("debug", "unsupported_message", "ignored non-text or empty message", {"message_id": message.message_id, "message_type": message.message_type})
             return
@@ -224,7 +224,8 @@ class WeChatChannelService:
             metadata.update(quote)
         allowed, reason = self.policy.allow(message)
         mentioned = self.receive.mentions_self(raw.content) if message.conversation_type == "group" else False
-        if allowed and message.conversation_type == "group" and bool(self.config["policy"].get("group_reply_only_when_mentioned", False)) and not mentioned:
+        mention_groups = set(str(value) for value in (self.config["policy"].get("group_reply_only_when_mentioned_groups") or []))
+        if allowed and message.conversation_type == "group" and message.conversation_id in mention_groups and not mentioned:
             allowed, reason = False, "group message does not mention account"
         record = message.to_dict()
         record["context"] = metadata
@@ -232,7 +233,7 @@ class WeChatChannelService:
         record["policy_reason"] = reason
         record["mentioned"] = mentioned
         if not allowed:
-            self.store.mark_processed(message.message_id, message.conversation_id, record)
+            self._record_processed(message.message_id, message.conversation_id, record)
             self.store.set_cursor(raw.conversation_id, raw.sort_seq)
             self.events.publish("context", {"message": record})
             self.log("info", "context", "message recorded without reply", {"message_id": message.message_id, "conversation_id": message.conversation_id, "reason": reason})
@@ -247,7 +248,7 @@ class WeChatChannelService:
         task = SendTask(message.conversation_id, reply.text, message.message_id, message.message_id + ":reply")
         if self.store.create_send_task(task.to_dict()):
             self._send_queue.put(task)
-        self.store.mark_processed(message.message_id, message.conversation_id, record)
+        self._record_processed(message.message_id, message.conversation_id, record)
         self.store.set_cursor(raw.conversation_id, raw.sort_seq)
         self.events.publish("message", {"message": record, "session_id": reply.session_id})
         self.log("info", "message", "message routed to agent", {"message_id": message.message_id, "session_id": reply.session_id})
@@ -258,6 +259,10 @@ class WeChatChannelService:
         if not match:
             return {}
         return {"quoted_message": match.group(3).strip(), "quoted_sender": match.group(2).strip()}
+
+    def _record_processed(self, message_id: str, conversation_id: str, payload: Dict[str, Any]) -> None:
+        self.store.mark_processed(message_id, conversation_id, payload)
+        self.store.prune_recent_messages(int(self.config["state"].get("recent_context_limit", 200)))
 
     def _send_loop(self) -> None:
         while not self._stop.is_set():

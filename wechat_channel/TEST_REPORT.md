@@ -42,4 +42,4 @@ Hook 的 `/QueryDB/status` 在本机返回 `IsLogin=0`，但 Hook 实发和数�
 - 真实故障回归：`wechatauto-replica` 返回 `type="文本"` 时会归一化为 `text` 并进入 AgentAdapter，不再记为 `unsupported_message`。
 - 安装回归：postinstall 会创建 `~/.dsh-channel-im/auth.mjs`、`server.mjs` 与 `package-root.txt`，Windows 真人扫码入口可直接定位 `~/.local/bin/dws.exe`。
 - 身份上下文回归：默认策略允许群聊；会话与发送者的昵称、备注、微信号（alias，可用时）会注入 DSH Agent 消息上下文，群聊使用群名称作为会话标题。
-- 规则面板回归：管理 API 可保存群聊/联系人黑白名单与“仅 @我回复”；未获回复的群消息仍写入 `/api/recent`，面板可显示群名称、发送者、正文和引用内容。
+- 规则面板回归：管理 API 可保存群聊/联系人黑白名单；每个群聊可独立设置“仅 @AI 回复”。未获回复的群消息仍写入 `/api/recent`，SQLite 固定保留最近 200 条上下文，设置面板不展示消息正文。

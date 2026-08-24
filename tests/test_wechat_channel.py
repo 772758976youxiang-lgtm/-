@@ -11,7 +11,7 @@ from wechat_channel.agents import DshAgentAdapter, EchoAgentAdapter
 from wechat_channel.config import DEFAULT_CONFIG, load_config
 from wechat_channel.drivers import SendDriver, SendRouter, WeChatDbReceiveDriver, parse_group_content
 from wechat_channel.http_api import ManagementServer
-from wechat_channel.models import DriverHealth, SendResult, SendTask, StandardMessage
+from wechat_channel.models import DriverHealth, RawMessage, SendResult, SendTask, StandardMessage
 from wechat_channel.service import Policy, WeChatChannelService
 from wechat_channel.storage import StateStore
 
@@ -212,6 +212,28 @@ class WeChatChannelTests(unittest.TestCase):
         prompt = DshAgentAdapter._contextual_prompt(message, quote)
         self.assertIn("引用消息发送者：张三", prompt)
         self.assertIn("引用的消息：原始内容", prompt)
+
+    def test_only_selected_group_requires_mention_but_keeps_context(self):
+        db = FakeDb()
+        receive = WeChatDbReceiveDriver(self.store, db_factory=lambda **_: db)
+        receive.mentions_self = lambda _content: False
+        config = copy.deepcopy(DEFAULT_CONFIG)
+        config["policy"]["group_reply_only_when_mentioned_groups"] = ["group@chatroom"]
+        service = WeChatChannelService(config, self.store, receive,
+                                       SendRouter([FakeSendDriver("send", [True])], 0), EchoAgentAdapter())
+        raw = RawMessage("account", "group@chatroom", "1", 1, "text", "member:\\nhello", 1, 1)
+        service._handle_raw(raw)
+        latest = self.store.recent_messages(1)[0]["message"]
+        self.assertFalse(latest["reply_allowed"])
+        self.assertEqual(latest["policy_reason"], "group message does not mention account")
+        self.assertEqual(service._send_queue.qsize(), 0)
+
+    def test_context_storage_retains_latest_two_hundred_records(self):
+        for index in range(205):
+            self.store.mark_processed("m-%d" % index, "group", {"index": index})
+        self.store.prune_recent_messages(200)
+        records = self.store.recent_messages(500)
+        self.assertEqual(len(records), 200)
 
 
 if __name__ == "__main__":
