@@ -2,13 +2,13 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.3.17）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.3.20）：**
 
 | 模块 | 说明 |
 |---|---|
 | 桥接 `server.mjs` | 钉钉机器人(stream)/数字人(dws)/企微预留：随宿主启停、崩溃自重启、管理API 5175、热加载、看门狗、工作区自愈、防互聊/防自环 |
 | 扫码 `auth.mjs` | 钉钉数字人设备流登录，成功自动注册通道（120s 超时） |
-| 「连接」页 | **原生 client 插件**（同包 dsh.client 面；微信个人号开关可自动拉起扫码窗口并建立通道） |
+| 「连接」页 | **原生 client 插件**（同包 dsh.client 面；微信个人号由 Harness 托管、检测与接管） |
 | 「外部打开」 | 会话详情按钮（官方 npm 版经注入生效；原生槽位插件化在后续版本） |
 | 技能 ×2 | `im-channel-setup`（通道自助接入）+ `harness-docs`（说明书自动维护） |
 | 预设 | 「机器人助手」（无命令/无联网/数字员工人格） |
@@ -41,9 +41,11 @@ v0.3.17 在连接规则面板增加唯一“预设写入权限人”。只有该
 
 v0.3.18 为微信群机器人增加原生群成员 @：群回复默认真实 @ 原消息发送者，使用扩展的本机 Hook `SendAtText` 接口直接写入微信消息 `atlist`，不打开或聚焦微信窗口。若 Hook 未加载该接口，@ 任务会停止并报告失败，不会偷偷降级为 UIA/OCR 或普通文本。
 
+v0.3.20 改为 Harness 全程托管微信通道：开关不再强制结束任何微信进程，而是持续检测并直接接管已运行的微信；只有在微信未运行且 `runtime.wechatStartupMode` 为默认的 `auto` 时，Harness 才会启动登录窗口。将该项设为 `attach` 则只接管手动启动的微信。Harness 启动和后续巡检均会校验 Python 依赖，缺失时按 `wechat_channel/requirements.txt` 自动补齐，并正确兼容 Python 3.14 对可选 `zstandard` 的环境标记。
+
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
-微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。控制接口为 `GET /api/wechat/status` 与 `POST /api/wechat/toggle`。
+微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。可在微信配置的 `runtime` 中设置 `{ "wechatStartupMode": "attach" }` 只接管现有进程。控制接口为 `GET /api/wechat/status` 与 `POST /api/wechat/toggle`。
 
 ## 官方功能对齐（overrides）
 

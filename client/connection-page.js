@@ -51,7 +51,7 @@ export default function ConnectionSection({ t, readStatus, readWechat, toggleWec
   const shown = items.filter((c) => c.status === "connected" && c.mode !== "wechat_pc");
   const rowStyle = { display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "14px", background: "var(--dsw-alias-bg-layer-1)", marginBottom: "12px" };
   const dot = () => <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--dsw-alias-state-success-primary)", marginLeft: "8px" }} />;
-  const phaseText = wechat.phase === "connected" ? t("wechat.connected") : wechat.phase === "waiting_for_scan" ? t("wechat.waiting") : wechat.phase === "starting" ? t("wechat.starting") : t("wechat.disabled");
+  const phaseText = wechat.phase === "connected" ? t("wechat.connected") : wechat.phase === "waiting_for_scan" ? t("wechat.waiting") : wechat.phase === "waiting_for_existing_process" ? t("wechat.waitingForWechat") : wechat.phase === "starting" ? t("wechat.starting") : t("wechat.disabled");
   const phaseColor = wechat.phase === "connected" ? "var(--dsw-alias-state-success-primary)" : wechat.enabled ? "var(--dsw-alias-state-warning-primary, #d97706)" : "var(--dsw-alias-label-tertiary)";
   const rulesCardStyle = { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "14px", overflow: "hidden", marginBottom: "12px", background: "var(--dsw-alias-bg-layer-1)" };
   const selectStyle = { height: "32px", padding: "0 28px 0 10px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "8px", background: "var(--dsw-alias-bg-layer-1)", color: "var(--dsw-alias-label-primary)", fontSize: "13px" };
@@ -68,7 +68,7 @@ export default function ConnectionSection({ t, readStatus, readWechat, toggleWec
             {t("wechat.name")}<span style={{ fontSize: "12px", color: phaseColor }}>{busy ? t("wechat.processing") : phaseText}</span>
           </div>
           <div style={{ fontSize: "12.5px", color: "var(--dsw-alias-label-tertiary)", marginTop: "4px", lineHeight: "19px" }}>
-            {wechat.supported === false ? t("wechat.windowsOnly") : wechat.phase === "connected" ? `${wechat.account?.nickname ? `${wechat.account.nickname} · ` : ""}${t("wechat.details")}` : wechat.enabled ? t("wechat.waitingHint") : t("wechat.disabledHint")}
+            {wechat.supported === false ? t("wechat.windowsOnly") : wechat.phase === "connected" ? `${wechat.account?.nickname ? `${wechat.account.nickname} · ` : ""}${t("wechat.details")}` : wechat.phase === "waiting_for_existing_process" ? t("wechat.attachHint") : wechat.enabled ? t("wechat.waitingHint") : t("wechat.disabledHint")}
           </div>
           {(error || wechat.error) && <div role="alert" style={{ fontSize: "12px", color: "var(--dsw-alias-state-error-primary, #dc2626)", marginTop: "6px" }}>{error || wechat.error}</div>}
         </div>

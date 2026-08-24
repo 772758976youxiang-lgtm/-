@@ -437,7 +437,8 @@ function stopDwsListener(id) { const st = dwsState.get(id); if (!st) return; try
 
 // ---------- 微信个人号通道（数据库接收 + Hook/UIA/OCR 发送） ----------
 const wechatState = new Map(); // 通道id -> { cfg, child, connected, loggedIn, stopping, lastError }
-const wechatLaunchState = { launchedAt: 0, executable: "", lastError: "" };
+const wechatLaunchState = { launchedAt: 0, executable: "", lastError: "", startupMode: "auto", action: "idle" };
+const wechatSupervisor = { timer: null, pending: null, dependenciesReady: false, lastDependencyCheck: 0 };
 const wechatHealthCache = { url: "", at: 0, value: null, pending: null };
 function startWechatChannel(cfg) {
   if (wechatState.has(cfg.id)) return;
@@ -516,6 +517,45 @@ function capture(command, args, timeoutMs = 5000) {
   });
 }
 
+function readWechatStartupSettings(cfg) {
+  const configFile = cfg?.configFile || DEFAULT_WECHAT_CONFIG;
+  let custom = {};
+  try { custom = JSON.parse(fs.readFileSync(configFile, "utf8")); } catch {}
+  const runtime = custom?.runtime && typeof custom.runtime === "object" ? custom.runtime : {};
+  const requestedMode = String(process.env.DSH_WECHAT_STARTUP_MODE || cfg?.wechatStartupMode || runtime.wechatStartupMode || "auto").toLowerCase();
+  return {
+    // auto: Harness 未检测到微信时才启动；attach: 只接管用户已启动的微信。
+    startupMode: requestedMode === "attach" ? "attach" : "auto",
+    executable: String(process.env.DSH_WECHAT_EXECUTABLE || cfg?.wechatExecutable || runtime.wechatExecutable || WECHAT_EXECUTABLE || "").trim(),
+  };
+}
+
+async function ensureWechatPythonDependencies() {
+  if (wechatSupervisor.dependenciesReady) return;
+  if (wechatSupervisor.pending) return wechatSupervisor.pending;
+  wechatSupervisor.pending = (async () => {
+    // zstandard 在 Python 3.14+ 被 requirements 的环境标记排除，不能把它当成必需项。
+    const probe = await capture(PYTHON_BIN, ["-c", "import wechatauto"], 15000);
+    if (probe.code === 0) {
+      wechatSupervisor.dependenciesReady = true;
+      wechatSupervisor.lastDependencyCheck = Date.now();
+      return;
+    }
+    const requirements = path.join(PLUGIN_ROOT, "wechat_channel", "requirements.txt");
+    if (!fs.existsSync(requirements)) throw new Error("微信通道依赖清单缺失: " + requirements);
+    log("[微信托管] 正在补齐 Python 依赖");
+    const install = await capture(PYTHON_BIN, ["-m", "pip", "install", "-r", requirements], 180000);
+    if (install.code !== 0) throw new Error("微信通道依赖安装失败: " + (install.stderr || install.stdout || "python/pip 不可用").slice(-500));
+    const verify = await capture(PYTHON_BIN, ["-c", "import wechatauto"], 15000);
+    if (verify.code !== 0) throw new Error("微信通道依赖校验失败: " + (verify.stderr || verify.stdout || "未知错误").slice(-500));
+    wechatSupervisor.dependenciesReady = true;
+    wechatSupervisor.lastDependencyCheck = Date.now();
+    log("[微信托管] Python 依赖已就绪");
+  })();
+  try { await wechatSupervisor.pending; }
+  finally { wechatSupervisor.pending = null; }
+}
+
 async function isWeChatProcessRunning() {
   if (process.platform !== "win32") return false;
   const result = await capture("tasklist.exe", ["/FI", "IMAGENAME eq Weixin.exe", "/FI", "STATUS eq RUNNING", "/FO", "CSV", "/NH"]);
@@ -524,9 +564,10 @@ async function isWeChatProcessRunning() {
   return /WeChat\.exe/i.test(legacy.stdout);
 }
 
-function findWeChatExecutable() {
+function findWeChatExecutable(settings = {}) {
   if (process.platform !== "win32") return "";
   const candidates = [
+    settings.executable,
     WECHAT_EXECUTABLE,
     path.join(process.env.ProgramW6432 || "C:\\Program Files", "Tencent", "Weixin", "Weixin.exe"),
     path.join(process.env.ProgramFiles || "C:\\Program Files", "Tencent", "Weixin", "Weixin.exe"),
@@ -536,32 +577,55 @@ function findWeChatExecutable() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || "";
 }
 
-async function closeExistingWeChatProcesses() {
-  if (process.platform !== "win32") return;
-  for (const image of ["Weixin.exe", "WeChat.exe"]) {
-    const result = await capture("taskkill.exe", ["/IM", image, "/T", "/F"], 10000);
-    if (result.code === 0) log(`[微信登录] 已关闭旧进程 ${image}`);
-  }
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    if (!(await isWeChatProcessRunning())) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error("旧微信进程未能在 10 秒内退出，请手动关闭后重试");
-}
-
-async function launchWeChatLoginWindow() {
+async function launchWeChatLoginWindow(settings = {}) {
   if (process.platform !== "win32") throw new Error("微信个人号通道仅支持 Windows");
-  const executable = findWeChatExecutable();
+  const executable = findWeChatExecutable(settings);
   if (!executable) throw new Error("未找到微信客户端，请安装微信 4.x，或配置 DSH_WECHAT_EXECUTABLE");
-  await closeExistingWeChatProcesses();
   const child = spawn(executable, [], { detached: true, stdio: "ignore", windowsHide: false, shell: false });
   child.unref();
   wechatLaunchState.launchedAt = Date.now();
   wechatLaunchState.executable = executable;
   wechatLaunchState.lastError = "";
-  log(`[微信登录] 已拉起 ${executable}`);
+  wechatLaunchState.action = "launched";
+  log(`[微信托管] 未检测到微信，已拉起 ${executable}`);
   return executable;
+}
+
+async function reconcileWechatChannel(cfg) {
+  if (!cfg?.enabled || cfg.mode !== "wechat_pc") return;
+  const settings = readWechatStartupSettings(cfg);
+  wechatLaunchState.startupMode = settings.startupMode;
+  try {
+    ensureWechatPresetConfig(cfg);
+    await ensureWechatPythonDependencies();
+    const processRunning = await isWeChatProcessRunning();
+    if (processRunning) {
+      wechatLaunchState.action = "attached";
+      wechatLaunchState.lastError = "";
+    } else if (settings.startupMode === "auto") {
+      await launchWeChatLoginWindow(settings);
+    } else {
+      wechatLaunchState.action = "waiting_for_existing_process";
+    }
+    if (!wechatState.has(cfg.id)) startWechatChannel(cfg);
+  } catch (error) {
+    const message = error?.message ?? String(error);
+    wechatLaunchState.lastError = message;
+    wechatLaunchState.action = "error";
+    const state = wechatState.get(cfg.id);
+    if (state) state.lastError = message;
+    log(`[微信托管] ${message}`);
+    writeStatus();
+  }
+}
+
+function startWechatSupervisor() {
+  if (wechatSupervisor.timer) return;
+  wechatSupervisor.timer = setInterval(() => {
+    if (wechatSupervisor.pending) return;
+    const cfg = getWechatConfigEntry();
+    if (cfg?.enabled) reconcileWechatChannel(cfg);
+  }, 5000);
 }
 
 function wechatManagementUrl(cfg) {
@@ -667,6 +731,7 @@ async function getWechatControlStatus() {
   let phase = "disabled";
   if (enabled && loggedIn) phase = "connected";
   else if (enabled && processRunning) phase = "waiting_for_scan";
+  else if (enabled && wechatLaunchState.action === "waiting_for_existing_process") phase = "waiting_for_existing_process";
   else if (enabled) phase = "starting";
   return {
     ok: true,
@@ -678,8 +743,10 @@ async function getWechatControlStatus() {
     processRunning,
     serviceRunning,
     loggedIn,
-    executable: wechatLaunchState.executable || findWeChatExecutable(),
+    executable: wechatLaunchState.executable || findWeChatExecutable(readWechatStartupSettings(cfg)),
     launchedAt: wechatLaunchState.launchedAt || null,
+    startupMode: wechatLaunchState.startupMode,
+    supervisorAction: wechatLaunchState.action,
     account: loggedIn ? {
       id: service?.receive?.details?.account_id || "",
       nickname: service?.receive?.details?.nickname || "",
@@ -705,21 +772,17 @@ async function toggleWechatChannel(enabled) {
   wechatHealthCache.at = 0;
   wechatHealthCache.value = null;
 
-  if (enabled) {
-    try {
-      stopWechatChannel(next.id);
-      await launchWeChatLoginWindow();
-    }
-    catch (error) {
-      wechatLaunchState.lastError = error?.message ?? String(error);
-      throw error;
-    }
-  }
   if (index >= 0) cfgs[index] = next;
   else cfgs.push(next);
   saveConfig(cfgs);
+  if (enabled) await reconcileWechatChannel(next);
+  else {
+    wechatLaunchState.action = "disabled";
+    wechatLaunchState.lastError = "";
+    stopWechatChannel(next.id);
+  }
   syncChannels();
-  log(`[微信开关] ${enabled ? "开启，等待扫码/登录" : "关闭"}`);
+  log(`[微信开关] ${enabled ? "开启，由 Harness 托管" : "关闭"}`);
   return getWechatControlStatus();
 }
 function readWechatRules() {
@@ -775,9 +838,9 @@ function syncChannels() {
     const cfg = byId.get(id);
     const current = wechatState.get(id)?.cfg;
     if (!cfg || !cfg.enabled || cfg.mode !== "wechat_pc") stopWechatChannel(id);
-    else if ((cfg.configFile || DEFAULT_WECHAT_CONFIG) !== (current?.configFile || DEFAULT_WECHAT_CONFIG)) { stopWechatChannel(id); startWechatChannel(cfg); }
+    else if ((cfg.configFile || DEFAULT_WECHAT_CONFIG) !== (current?.configFile || DEFAULT_WECHAT_CONFIG)) { stopWechatChannel(id); reconcileWechatChannel(cfg); }
   }
-  for (const cfg of cfgs) if (cfg.enabled && cfg.mode === "wechat_pc" && !wechatState.has(cfg.id)) startWechatChannel(cfg);
+  for (const cfg of cfgs) if (cfg.enabled && cfg.mode === "wechat_pc" && !wechatState.has(cfg.id)) reconcileWechatChannel(cfg);
   log(`[sync] 已连接通道: ${[...channels.keys()].join(", ") || "(无)"}${dwsState.size ? " | dws: " + [...dwsState.keys()].join(", ") : ""}${wechatState.size ? " | wechat: " + [...wechatState.keys()].join(", ") : ""}`);
   writeStatus();
 }
@@ -787,6 +850,7 @@ try {
   fs.watch(CONFIG_FILE, () => { clearTimeout(reloadTimer); reloadTimer = setTimeout(() => { log("[配置变更]"); syncChannels(); }, 800); });
 } catch (e) { log("[watch 配置失败]", e?.message ?? e); }
 syncChannels();
+startWechatSupervisor();
 
 // ---------- 管理 API（供 agent 直接增删，无需改文件） ----------
 const BRIDGE_PORT = Number(process.env.DSH_BRIDGE_PORT || 5175);
