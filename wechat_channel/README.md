@@ -98,7 +98,7 @@ Invoke-RestMethod -Method Post -ContentType application/json `
 
 ## AgentAdapter
 
-默认 `agent.adapter=dsh`，直接复用本机 DSH 的工作区与 Session；通道启动时就会创建/校验工作区，工作区被手动删除后也会自动重建。由桥接器为每个通道自动创建并指定独立预设。预设初始自我设定为空，只挂载机器人专用的自我设定工具；它可在回复后把稳定人设写入当前通道的 `self-profile.md`，但不会保存用户资料、聊天内容、任务或记忆。也可改为：
+默认 `agent.adapter=dsh`，直接复用本机 DSH 的工作区与 Session；通道启动时就会创建/校验工作区，工作区被手动删除后也会自动重建。由桥接器为每个通道自动创建并指定独立预设。连接规则面板可指定唯一“预设写入权限人”，工具会核对该联系人私聊对应的真实 Session ID；其他联系人、群聊和普通 Harness 会话不能写入。授权会话会先判断本轮是否有可靠、可复用且值得长期保存的内容，再生成整体摘要，将新旧内容合并、去重、纠错并整体优化后覆盖 `self-profile.md`。也可改为：
 
 - `echo`：独立验证微信收发；
 - `http`：调用 `/health`、`/sessions`、`/respond`；

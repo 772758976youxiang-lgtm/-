@@ -111,11 +111,12 @@ class ProcessAgentAdapter(AgentAdapter):
 
 class DshAgentAdapter(AgentAdapter):
     def __init__(self, endpoint: str, store: StateStore, workspace_dir: str = "", preset: str = "channel-wechat-personal",
-                 timeout: float = 90):
+                 timeout: float = 90, authorized_contact_id: str = ""):
         self.endpoint = endpoint.rstrip("/")
         self.store = store
         self.workspace_dir = str(Path(workspace_dir).expanduser()) if workspace_dir else str(Path.home() / "DeepSeek" / "im-workspaces" / "wechat")
         self.preset = preset
+        self.authorized_contact_id = str(authorized_contact_id or "").strip()
         self.timeout = float(timeout)
         self._rpc_seq = 0
         self._workspace_id: Optional[str] = None
@@ -167,7 +168,28 @@ class DshAgentAdapter(AgentAdapter):
 
     def ensure_ready(self) -> Dict[str, Any]:
         workspace_id = self._workspace()
+        self._sync_profile_permissions()
         return {"ok": True, "adapter": "dsh", "workspace_id": workspace_id}
+
+    def _sync_profile_permissions(self) -> None:
+        preset_name = Path(self.preset).name
+        target = Path.home() / ".dsh" / ".agent-presets" / preset_name / "self-profile-permissions.json"
+        session_ids = []
+        if self.authorized_contact_id:
+            for item in self.store.sessions():
+                metadata = item.get("metadata") or {}
+                if (metadata.get("conversation_type") == "direct"
+                        and str(metadata.get("conversation_id") or "") == self.authorized_contact_id):
+                    session_ids.append(str(item["session_id"]))
+        payload = {
+            "authorizedContactId": self.authorized_contact_id,
+            "authorizedSessionIds": sorted(set(session_ids)),
+            "updatedAt": int(time.time() * 1000),
+        }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(target.name + ".tmp-%d" % os.getpid())
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(str(temporary), str(target))
 
     def get_or_create_session(self, conversation_key: str, metadata: Dict[str, Any]) -> str:
         existing = self.store.get_session(conversation_key)
@@ -179,6 +201,7 @@ class DshAgentAdapter(AgentAdapter):
             try:
                 self._rpc("session.history", {"sessionId": existing, "maxMessages": 1})
                 self._rpc("session.rename", {"sessionId": existing, "title": title[:40]})
+                self._sync_profile_permissions()
                 return existing
             except Exception:
                 existing = None
@@ -195,6 +218,7 @@ class DshAgentAdapter(AgentAdapter):
             created = self._rpc("session.create", {"workspaceId": self._workspace(), "agentPreset": self.preset})
         session_id = str(created["sessionId"])
         self.store.set_session(conversation_key, session_id, {**metadata, "_agent_preset": self.preset})
+        self._sync_profile_permissions()
         try:
             self._rpc("session.rename", {"sessionId": session_id, "title": title[:40]})
         except Exception:
@@ -225,6 +249,7 @@ class DshAgentAdapter(AgentAdapter):
                            ("发送者备注", "sender_remark"), ("发送者微信号", "sender_wechat_id")):
             if metadata.get(key):
                 lines.append(label + "：" + str(metadata[key]))
+        lines.append("长期设定写入权限：" + ("允许（后台指定权限人的私聊）" if metadata.get("profile_write_authorized") else "禁止"))
         if message.conversation_type == "group":
             mention = "是" if metadata.get("mentioned") else "否"
             if metadata.get("mention_display_masked"):
@@ -295,5 +320,6 @@ def make_agent_adapter(config: Dict[str, Any], store: StateStore) -> AgentAdapte
         return ProcessAgentAdapter(settings.get("command") or [], timeout)
     if kind == "dsh":
         return DshAgentAdapter(str(settings["endpoint"]), store, str(settings.get("workspace_dir") or ""),
-                               str(settings.get("preset") or "channel-wechat-personal"), timeout)
+                               str(settings.get("preset") or "channel-wechat-personal"), timeout,
+                               str(config.get("policy", {}).get("profile_write_authorized_contact") or ""))
     raise ValueError("unsupported agent adapter: " + kind)

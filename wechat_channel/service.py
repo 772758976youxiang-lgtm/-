@@ -242,6 +242,10 @@ class WeChatChannelService:
             "sender_nickname": sender_profile.get("nickname") or "",
             "sender_remark": sender_profile.get("remark") or "",
             "sender_wechat_id": sender_profile.get("wechat_id") or "",
+            "profile_write_authorized": bool(
+                message.conversation_type == "direct"
+                and message.conversation_id == str(self.config["policy"].get("profile_write_authorized_contact") or "")
+            ),
         }
         if normalized_type in media_types:
             metadata["media"] = self.receive.materialize_media(raw, str(self.config["state"].get("media_dir") or ""))

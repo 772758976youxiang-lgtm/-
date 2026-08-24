@@ -47,12 +47,13 @@ function yamlScalar(value) {
 }
 function channelPresetDefinition(cfg, directory) {
   return [
-    "# 通道机器人专属预设：自我设定初始为空，只挂载受限的自我设定插件。",
+    "# 通道机器人专属预设：只挂载受权限会话约束的长期设定整理插件。",
     "- id: channel-self-profile",
     "  name: '@deepseek-ai/dsh-channel-im/self-profile'",
     "  config:",
     "    channelId: " + yamlScalar(cfg?.id || "channel"),
     "    profilePath: " + yamlScalar(path.join(directory, "self-profile.md")),
+    "    authorizationPath: " + yamlScalar(path.join(directory, "self-profile-permissions.json")),
     "    maxChars: 12000",
     "",
   ].join("\n");
@@ -64,6 +65,7 @@ function ensureChannelPreset(cfg) {
   const metadata = path.join(directory, "preset.yml");
   const definition = path.join(directory, "agent.cordis.yml");
   const profile = path.join(directory, "self-profile.md");
+  const permissions = path.join(directory, "self-profile-permissions.json");
   const oldDescription = "为通道「" + (cfg?.name || cfg?.id || "") + "」自动创建的独立空白预设。";
   const newDescription = "为通道「" + (cfg?.name || cfg?.id || "") + "」自动创建的独立机器人预设，可持续完善自身设定。";
   if (!fs.existsSync(metadata)) {
@@ -81,11 +83,14 @@ function ensureChannelPreset(cfg) {
   }
   const previous = fs.existsSync(definition) ? fs.readFileSync(definition, "utf8") : "";
   const legacyBlank = previous.trim() === "# 通道专属预设：人设与工具调用暂为空白。\n[]";
-  if (!previous || legacyBlank) {
+  if (!previous || legacyBlank || (previous.includes("@deepseek-ai/dsh-channel-im/self-profile") && !previous.includes("authorizationPath:"))) {
     fs.writeFileSync(definition, channelPresetDefinition(cfg, directory));
   }
   if (!fs.existsSync(profile)) {
     fs.writeFileSync(profile, "", "utf8");
+  }
+  if (!fs.existsSync(permissions)) {
+    fs.writeFileSync(permissions, JSON.stringify({ authorizedContactId: "", authorizedSessionIds: [], updatedAt: Date.now() }, null, 2) + "\n", "utf8");
   }
   return preset;
 }
@@ -735,6 +740,7 @@ async function updateWechatRules(policy) {
     direct_whitelist: cleanList(policy?.direct_whitelist), direct_blacklist: cleanList(policy?.direct_blacklist),
     group_whitelist: cleanList(policy?.group_whitelist), group_blacklist: cleanList(policy?.group_blacklist),
     group_reply_only_when_mentioned_groups: cleanList(policy?.group_reply_only_when_mentioned_groups),
+    profile_write_authorized_contact: String(policy?.profile_write_authorized_contact || "").trim().slice(0, 256),
   };
   const file = cfg.configFile || DEFAULT_WECHAT_CONFIG;
   let custom = {};

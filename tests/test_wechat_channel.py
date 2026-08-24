@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -274,6 +276,37 @@ class WeChatChannelTests(unittest.TestCase):
         ready = adapter.ensure_ready()
         self.assertEqual(ready["workspace_id"], "new-workspace")
         self.assertIn(("workspace.create", {"path": workspace_dir}), calls)
+
+    def test_profile_write_permission_maps_only_the_authorized_direct_session(self):
+        preset = "channel-test-permission-%d" % os.getpid()
+        preset_dir = Path.home() / ".dsh" / ".agent-presets" / preset
+        try:
+            self.store.set_session("wechat:a:owner", "session-owner", {
+                "conversation_id": "owner", "conversation_type": "direct",
+            })
+            self.store.set_session("wechat:a:owner@chatroom", "session-group", {
+                "conversation_id": "owner", "conversation_type": "group",
+            })
+            adapter = DshAgentAdapter("http://127.0.0.1:3080", self.store, preset=preset,
+                                      authorized_contact_id="owner")
+            adapter._sync_profile_permissions()
+            permissions = json.loads((preset_dir / "self-profile-permissions.json").read_text(encoding="utf-8"))
+            self.assertEqual(permissions["authorizedContactId"], "owner")
+            self.assertEqual(permissions["authorizedSessionIds"], ["session-owner"])
+        finally:
+            if preset_dir.exists():
+                shutil.rmtree(preset_dir)
+
+    def test_service_marks_only_selected_direct_contact_as_profile_writer(self):
+        db = FakeDb()
+        receive = WeChatDbReceiveDriver(self.store, db_factory=lambda **_: db)
+        agent = CapturingAgent()
+        config = copy.deepcopy(DEFAULT_CONFIG)
+        config["policy"]["profile_write_authorized_contact"] = "friend"
+        service = WeChatChannelService(config, self.store, receive,
+                                       SendRouter([FakeSendDriver("send", [True])], 0), agent)
+        service._handle_raw(RawMessage("account", "friend", "41", 1, "text", "remember this", 1, 41))
+        self.assertTrue(agent.metadata["profile_write_authorized"])
 
     def test_image_message_reaches_agent_and_persists_safe_media_metadata(self):
         db = FakeDb()

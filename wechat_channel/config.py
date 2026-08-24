@@ -50,6 +50,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "direct_whitelist": [],
         "direct_blacklist": [],
         "group_reply_only_when_mentioned_groups": [],
+        "profile_write_authorized_contact": "",
         "sensitive_words": [],
         "rate_limit_per_minute": 10,
         "enabled": True,

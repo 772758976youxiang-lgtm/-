@@ -136,6 +136,25 @@ class StateStore:
                 (conversation_key, session_id, json.dumps(metadata, ensure_ascii=False, default=str), now),
             )
 
+    def sessions(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT conversation_key,session_id,metadata_json,updated_at FROM sessions ORDER BY updated_at DESC"
+            ).fetchall()
+        result = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata_json"])
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            result.append({
+                "conversation_key": str(row["conversation_key"]),
+                "session_id": str(row["session_id"]),
+                "metadata": metadata if isinstance(metadata, dict) else {},
+                "updated_at": int(row["updated_at"]),
+            })
+        return result
+
     def create_send_task(self, task: Dict[str, Any]) -> bool:
         now = self._now()
         with self._lock, self._db:
