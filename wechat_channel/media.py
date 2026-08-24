@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import struct
+import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -57,6 +58,8 @@ class WeChatMediaReceiver:
         self.save_dir = Path(save_dir).expanduser()
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.max_image_bytes = int(max_image_bytes)
+        self._key_scan_lock = threading.Lock()
+        self._key_scan_started = False
 
     def materialize(self, conversation_id: str, local_id: str, message_type: str) -> Dict[str, Any]:
         source_type = str(message_type or "unknown")
@@ -114,6 +117,7 @@ class WeChatMediaReceiver:
             dat_path = downloader._find_dat(conversation_id, md5, int(row.get("create_time") or 0), thumbnail=True)
             thumb = bool(dat_path)
         if not dat_path:
+            self._start_key_scan()
             return None
         encrypted = Path(dat_path).read_bytes()
         aes_key = None
@@ -135,6 +139,7 @@ class WeChatMediaReceiver:
                     if encrypted[-1] ^ 0xD9 == candidate:
                         xor_key = candidate
             if not aes_key or xor_key is None:
+                self._start_key_scan()
                 return None
         elif encrypted.startswith(b"\x07\x08\x05V\x02\x05") and xor_key is None and len(encrypted) > 22:
             body = encrypted[22:]
@@ -157,6 +162,26 @@ class WeChatMediaReceiver:
         target = self.save_dir / ("%s_%d%s.%s" % (conversation_id.replace("/", "_"), local_id, suffix, extension))
         target.write_bytes(data)
         return str(target)
+
+    def _start_key_scan(self) -> None:
+        """Discover the WeChat 4.x image key off the polling thread, without UIA."""
+        with self._key_scan_lock:
+            if self._key_scan_started:
+                return
+            self._key_scan_started = True
+
+        def scan() -> None:
+            try:
+                from wechatauto.media import MediaDownloader
+
+                downloader = MediaDownloader(self.db, save_dir=str(self.save_dir))
+                key = downloader._scan_aes_key(monitor=True, monitor_timeout=120)
+                if key:
+                    downloader._persist_key(key)
+            except Exception:
+                pass
+
+        threading.Thread(target=scan, name="wechat-image-key", daemon=True).start()
 
     def _download_emoji(self, conversation_id: str, local_id: int) -> Optional[str]:
         row = self.db.get_message_row(conversation_id, local_id) or {}

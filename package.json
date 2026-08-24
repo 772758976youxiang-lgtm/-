@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-channel-im",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "description": "DSH 外部功能一站式插件：钉钉/数字人/Windows 微信个人号通道，含数据库接收、Hook→UIA/OCR 发送、SQLite、AgentAdapter、连接页、技能与预设。",
   "type": "module",
   "exports": {
