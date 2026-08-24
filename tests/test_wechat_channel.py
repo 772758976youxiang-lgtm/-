@@ -30,6 +30,9 @@ class WeChatWindowStateTests(unittest.TestCase):
     def test_main_window_is_treated_as_logged_in(self):
         self.assertEqual(classify_window_state(699, 655), "main")
 
+    def test_tray_message_window_is_not_treated_as_main_window(self):
+        self.assertEqual(classify_window_state(1440, 759, "Qt51514WxTrayIconMessageWindowClass"), "auxiliary")
+
 
 class FakeDb:
     wxid = "wxid_test"

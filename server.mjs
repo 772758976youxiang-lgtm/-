@@ -26,6 +26,8 @@ const WECHAT_SERVICE_PORT_START = 5180;
 const MANAGEMENT_TOKEN = process.env.DSH_CHANNEL_MANAGEMENT_TOKEN || "";
 const PRESET_ROOT = path.join(os.homedir(), ".dsh", ".agent-presets");
 const PRESET_ARCHIVE_ROOT = path.join(os.homedir(), ".dsh", "preset-archive");
+const WECHAT_LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
+const WECHAT_ONBOARDING_POLL_MS = 5000;
 
 const NOW = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => console.log(`[${NOW()}]`, ...a);
@@ -763,7 +765,21 @@ async function onboardingTick(id) {
     let cfg = loadConfig().find((item) => item.id === id && item.mode === "wechat_pc");
     if (!cfg) { clearInterval(state.timer); wechatOnboarding.delete(id); return; }
     const bound = cfg.accountId ? { cfg } : await bindWechatCandidate(cfg, state.baselineAccounts, state.baselineWindows);
-    if (!bound) return;
+    if (!bound) {
+      const deadline = Number(cfg.onboardingDeadlineAt || 0);
+      if (deadline && Date.now() >= deadline) {
+        updateWechatConfigEntry(id, {
+          enabled: false,
+          onboardingPhase: "login_timeout",
+          onboardingError: "3 分钟内未完成微信登录，本次接入任务已自动取消",
+          onboardingUpdatedAt: Date.now(),
+        });
+        const launch = wechatLaunchState(id); launch.action = "login_timeout"; launch.lastError = "";
+        clearInterval(state.timer); wechatOnboarding.delete(id); writeStatus();
+        log(`[微信机器人 ${id}] 3 分钟内未检测到已登录主界面，本次接入任务已取消；微信进程保持不变`);
+      }
+      return;
+    }
     cfg = bound.cfg;
     const service = await readWechatServiceStatus(cfg, true);
     const sendReady = Array.isArray(service?.send) && service.send.some((item) => item?.ok);
@@ -785,7 +801,7 @@ async function onboardingTick(id) {
 function startWechatOnboardingMonitor(cfg, baselineAccounts, baselineWindows) {
   const old = wechatOnboarding.get(cfg.id); if (old?.timer) clearInterval(old.timer);
   const onboarding = { baselineAccounts: baselineAccounts || [], baselineWindows: baselineWindows || [], running: false, timer: null };
-  onboarding.timer = setInterval(() => onboardingTick(cfg.id), 60000);
+  onboarding.timer = setInterval(() => onboardingTick(cfg.id), WECHAT_ONBOARDING_POLL_MS);
   wechatOnboarding.set(cfg.id, onboarding);
   setTimeout(() => onboardingTick(cfg.id), 2500);
 }
@@ -989,7 +1005,8 @@ async function wechatBotStatus(cfg) {
     account: cfg.accountId ? { id: cfg.accountId, nickname: service?.receive?.details?.nickname || cfg.name || "微信" } : null,
     launchedAt: launch.launchedAt || null, wechatHwnd: Number(cfg.wechatHwnd || launch.hwnd || 0),
     stage: phase, error: cfg.onboardingError || state?.lastError || launch.lastError || service?.last_error || "",
-    reportIntervalSeconds: 60,
+    reportIntervalSeconds: 60, monitorIntervalSeconds: WECHAT_ONBOARDING_POLL_MS / 1000,
+    onboardingDeadlineAt: Number(cfg.onboardingDeadlineAt || 0) || null,
   };
 }
 async function getWechatControlStatus(channelId = "") {
@@ -1043,7 +1060,11 @@ async function setupWechatChannel(options = {}) {
     onboardingBaselineWindows: baselineWindows.map((item) => ({ hwnd: Number(item?.hwnd || 0) })).filter((item) => item.hwnd),
   });
   await launchWeChatLoginWindow(cfg);
-  cfg = updateWechatConfigEntry(cfg.id, { onboardingPhase: "waiting_for_login", onboardingUpdatedAt: Date.now() });
+  cfg = updateWechatConfigEntry(cfg.id, {
+    onboardingPhase: "waiting_for_login",
+    onboardingDeadlineAt: Date.now() + WECHAT_LOGIN_TIMEOUT_MS,
+    onboardingUpdatedAt: Date.now(),
+  });
   startWechatOnboardingMonitor(cfg, baselineAccounts, baselineWindows);
   syncChannels();
   return getWechatControlStatus(cfg.id);

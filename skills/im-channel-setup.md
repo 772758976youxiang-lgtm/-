@@ -1,18 +1,18 @@
 ---
 name: im-channel-setup
-description: 由 Harness 自动搭建和管理微信、钉钉 IM 通道。用户说“搭建/开启/停止/删除/诊断通道”时，必须使用 im_channel_manage；不要让用户自己改配置、运行命令或点击开关。
+description: 由 Harness 自动搭建和管理微信、钉钉 IM 通道。用户说“搭建/开启/停止/删除/诊断通道”时，通过 im_channel_manage 完成全部配置与操作。
 ---
 
 # Harness 通道搭建
 
-通道生命周期只能由本机普通 Harness 会话调用 `im_channel_manage` 管理。外部微信、钉钉通道会话无权调用；连接设置页只展示状态。
+本机普通 Harness 会话通过 `im_channel_manage` 管理通道生命周期；外部微信、钉钉通道会话负责日常消息交互，连接设置页负责展示状态。
 
 ## 通用规则
 
 - 第一步调用 `im_channel_manage`，`action=status`，识别当前设备、已安装通道和真实运行状态。
-- 不手工编辑 `~/.dsh-im-channels.json`，不让用户执行终端命令，不调用 5175 写接口。
+- 配置文件、终端步骤和 5175 写接口全部交由 `im_channel_manage` 与 Harness 托管器处理。
 - 换设备后重新调用搭建动作；工具会使用当前系统、当前用户目录和本机可执行文件生成配置并补齐依赖。
-- 凭证只作为工具入参传递，不在回复中复述 AppSecret。
+- 凭证作为工具入参安全传递，回复中展示通道名称和配置结果。
 
 ## 微信个人号
 
@@ -22,7 +22,15 @@ description: 由 Harness 自动搭建和管理微信、钉钉 IM 通道。用户
 {"action":"setup_wechat"}
 ```
 
-工具会检查 Windows、Python、依赖、微信安装路径、残留进程、Hook、配置文件、工作区和通道服务。返回 `waiting_for_scan` 时，只提示用户在 Harness 拉起的微信窗口扫码或手机确认；返回 `connected` 才能宣布完成。
+工具会检查 Windows、Python、依赖、微信安装路径、Hook、配置文件、工作区和通道服务。进入 `waiting_for_login` 后会自动执行最长 3 分钟的后台观察：内部每 5 秒检查一次，只在阶段变化或每分钟汇报。Agent 向用户做一次扫码、点击登录或手机确认的简短说明，随后由 Harness 自行检测登录结果并自动推进。
+
+检测到登录完成后，插件会自动唤醒当前 Agent。Agent 必须直接调用 `status` 做最终收发健康检查，通过后调用：
+
+```json
+{"action":"confirm_wechat_ready","channelId":"工具返回的通道 ID"}
+```
+
+最终验收通过后宣布完成。3 分钟内未登录会进入 `login_timeout` 并自动取消本次任务；Agent 简短报告超时结果并结束任务，微信进程保持原状。
 
 停止微信通道使用：
 
@@ -45,4 +53,4 @@ description: 由 Harness 自动搭建和管理微信、钉钉 IM 通道。用户
 {"action":"remove_channel","channelId":"准确的通道 ID"}
 ```
 
-不要自行杀进程或删除工作区目录；工具和 Harness 托管器会完成收尾。
+进程与工作区收尾统一交给工具和 Harness 托管器完成。
