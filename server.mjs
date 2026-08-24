@@ -438,7 +438,7 @@ function stopDwsListener(id) { const st = dwsState.get(id); if (!st) return; try
 // ---------- 微信个人号通道（数据库接收 + Hook/UIA/OCR 发送） ----------
 const wechatState = new Map(); // 通道id -> { cfg, child, connected, loggedIn, stopping, lastError }
 const wechatLaunchState = { launchedAt: 0, executable: "", lastError: "", startupMode: "auto", action: "idle" };
-const wechatSupervisor = { timer: null, pending: null, dependenciesReady: false, lastDependencyCheck: 0 };
+const wechatSupervisor = { timer: null, pending: null, dependenciesReady: false, lastDependencyCheck: 0, staleObservations: 0 };
 const wechatHealthCache = { url: "", at: 0, value: null, pending: null };
 function startWechatChannel(cfg) {
   if (wechatState.has(cfg.id)) return;
@@ -637,13 +637,15 @@ async function reconcileWechatChannel(cfg) {
     const processRunning = snapshot.length > 0 || await isWeChatProcessRunning();
     const hookLogin = readWechatHookLogin(service);
     const hasVisibleWindow = snapshot.some((item) => item.visible);
-    const launchGraceExpired = !wechatLaunchState.launchedAt || Date.now() - wechatLaunchState.launchedAt > 30000;
-    if (processRunning && hookLogin === false && !hasVisibleWindow && launchGraceExpired) {
+    const staleCandidate = processRunning && snapshot.length > 0 && !!service?.running && hookLogin !== true && !hasVisibleWindow && !wechatLaunchState.launchedAt;
+    wechatSupervisor.staleObservations = staleCandidate ? wechatSupervisor.staleObservations + 1 : 0;
+    if (staleCandidate && wechatSupervisor.staleObservations >= 3) {
       wechatLaunchState.action = "recovering_stale_process";
       await closeStaleWechatProcesses(snapshot);
       await launchWeChatLoginWindow(settings);
+      wechatSupervisor.staleObservations = 0;
     } else if (processRunning) {
-      wechatLaunchState.action = "attached";
+      wechatLaunchState.action = staleCandidate ? "checking_stale_process" : "attached";
       wechatLaunchState.lastError = "";
     } else if (settings.startupMode === "auto") {
       await launchWeChatLoginWindow(settings);
