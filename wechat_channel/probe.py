@@ -30,6 +30,11 @@ def _process_name(pid: int) -> str:
     return ""
 
 
+def classify_window_state(width: int, height: int) -> str:
+    """Distinguish the compact login card from the signed-in main window."""
+    return "main" if width >= 500 and height >= 500 else "login"
+
+
 def list_windows(include_hidden: bool = False) -> List[Dict[str, Any]]:
     if os.name != "nt":
         return []
@@ -58,6 +63,8 @@ def list_windows(include_hidden: bool = False) -> List[Dict[str, Any]]:
             result.append({
                 "hwnd": int(hwnd), "pid": int(pid.value), "title": title,
                 "class_name": class_name, "width": width, "height": height,
+                "visible": bool(user32.IsWindowVisible(hwnd)),
+                "state": classify_window_state(width, height),
             })
         return True
 

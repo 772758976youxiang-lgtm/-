@@ -2,7 +2,7 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.5.8）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.5.9）：**
 
 | 模块 | 说明 |
 |---|---|
@@ -75,6 +75,8 @@ v0.5.6 恢复并强制执行 Hook 优先、UIA/OCR 兜底的发送顺序。Harne
 v0.5.7 修复 Windows UIA 隔离进程的中文管道乱码：联系人、群聊名称和消息正文统一使用 ASCII JSON Unicode 转义跨进程传输，不再受系统代码页影响。
 
 v0.5.8 将 Hook 单次探测/发送超时限制为 15 秒，并捕获端口检测异常，确保 Hook 异常时一定能进入 UIA/OCR 兜底而不会中断发送队列。
+
+v0.5.9 将微信接入改为 Agent 可持续推进的任务：每分钟唤醒原会话判断下一步，错误时继续诊断，`connected` 后进入最终收发健康验收，只有 Agent 调用 `confirm_wechat_ready` 才结束任务。登录检测区分 296×388 等登录卡片与已登录主界面，数据库活动不再造成假登录；宿主重启后可恢复未完成检测。重新接入会复用已停用的原机器人并清理空壳。Agent 预设改为与微信 `wxid` 一对一绑定，未识别账号时不创建空壳预设，删除后自动重建；旧通道型孤儿预设会在迁移长期设定后归档。
 
 在普通 Harness 会话中说“帮我搭建微信通道”，Agent 会调用工具完成本机检查、依赖补齐和启动。实现细节见 [`wechat_channel/README.md`](wechat_channel/README.md)，真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 

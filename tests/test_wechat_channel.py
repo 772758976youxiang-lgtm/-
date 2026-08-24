@@ -18,8 +18,17 @@ from wechat_channel.drivers import HookSendDriver, SendDriver, SendRouter, UiaOc
 from wechat_channel.http_api import ManagementServer
 from wechat_channel.media import image_part_from_media
 from wechat_channel.models import AgentReply, DriverHealth, RawMessage, SendResult, SendTask, StandardMessage
+from wechat_channel.probe import classify_window_state
 from wechat_channel.service import Policy, WeChatChannelService
 from wechat_channel.storage import StateStore
+
+
+class WeChatWindowStateTests(unittest.TestCase):
+    def test_compact_login_card_is_not_treated_as_logged_in(self):
+        self.assertEqual(classify_window_state(296, 388), "login")
+
+    def test_main_window_is_treated_as_logged_in(self):
+        self.assertEqual(classify_window_state(699, 655), "main")
 
 
 class FakeDb:

@@ -25,6 +25,7 @@ const WECHAT_BOTS_ROOT = path.join(os.homedir(), ".dsh", "wechat-bots");
 const WECHAT_SERVICE_PORT_START = 5180;
 const MANAGEMENT_TOKEN = process.env.DSH_CHANNEL_MANAGEMENT_TOKEN || "";
 const PRESET_ROOT = path.join(os.homedir(), ".dsh", ".agent-presets");
+const PRESET_ARCHIVE_ROOT = path.join(os.homedir(), ".dsh", "preset-archive");
 
 const NOW = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => console.log(`[${NOW()}]`, ...a);
@@ -42,6 +43,12 @@ ensureConfigFile();
 
 // ---------- 通道专属 Agent 预设 ----------
 function channelPresetId(cfg) {
+  if (cfg?.mode === "wechat_pc") {
+    const wxid = String(cfg?.accountId || cfg?.expectedAccountId || "").trim();
+    if (!wxid) return "";
+    const safeWxid = wxid.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+    return safeWxid ? "wechat-" + safeWxid : "";
+  }
   const safe = String(cfg?.id || "channel").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "channel";
   return "channel-" + safe;
 }
@@ -63,27 +70,23 @@ function channelPresetDefinition(cfg, directory) {
 }
 function ensureChannelPreset(cfg) {
   const preset = channelPresetId(cfg);
+  // 微信账号尚未识别时不创建空壳预设；识别出 wxid 后才建立一对一预设。
+  if (!preset) return "";
   const directory = path.join(PRESET_ROOT, preset);
   fs.mkdirSync(directory, { recursive: true });
   const metadata = path.join(directory, "preset.yml");
   const definition = path.join(directory, "agent.cordis.yml");
   const profile = path.join(directory, "self-profile.md");
   const permissions = path.join(directory, "self-profile-permissions.json");
-  const oldDescription = "为通道「" + (cfg?.name || cfg?.id || "") + "」自动创建的独立空白预设。";
-  const newDescription = "为通道「" + (cfg?.name || cfg?.id || "") + "」自动创建的独立机器人预设，可持续完善自身设定。";
-  if (!fs.existsSync(metadata)) {
-    fs.writeFileSync(metadata, [
-      "name: " + yamlScalar((cfg?.name || cfg?.id || "通道") + " 通道"),
-      "description: " + yamlScalar(newDescription),
-      "order: 100",
-      "",
-    ].join("\n"));
-  } else {
-    const currentMetadata = fs.readFileSync(metadata, "utf8");
-    if (currentMetadata.includes(yamlScalar(oldDescription))) {
-      fs.writeFileSync(metadata, currentMetadata.replace(yamlScalar(oldDescription), yamlScalar(newDescription)));
-    }
-  }
+  const marker = path.join(directory, ".dsh-channel-im-managed.json");
+  const accountDescription = cfg?.mode === "wechat_pc" ? `，绑定微信 ID「${cfg?.accountId || cfg?.expectedAccountId}」` : "";
+  const newDescription = "为通道「" + (cfg?.name || cfg?.id || "") + `」自动创建的独立机器人预设${accountDescription}，可持续完善自身设定。`;
+  fs.writeFileSync(metadata, [
+    "name: " + yamlScalar((cfg?.name || cfg?.id || "通道") + " 通道"),
+    "description: " + yamlScalar(newDescription),
+    "order: 100",
+    "",
+  ].join("\n"));
   const previous = fs.existsSync(definition) ? fs.readFileSync(definition, "utf8") : "";
   const legacyBlank = previous.trim() === "# 通道专属预设：人设与工具调用暂为空白。\n[]";
   if (!previous || legacyBlank || (previous.includes("@deepseek-ai/dsh-channel-im/self-profile") && !previous.includes("authorizationPath:"))) {
@@ -95,10 +98,62 @@ function ensureChannelPreset(cfg) {
   if (!fs.existsSync(permissions)) {
     fs.writeFileSync(permissions, JSON.stringify({ authorizedContactId: "", authorizedSessionIds: [], updatedAt: Date.now() }, null, 2) + "\n", "utf8");
   }
+  fs.writeFileSync(marker, JSON.stringify({
+    owner: "@deepseek-ai/dsh-channel-im",
+    channelId: String(cfg?.id || ""),
+    wechatId: cfg?.mode === "wechat_pc" ? String(cfg?.accountId || cfg?.expectedAccountId || "") : "",
+    updatedAt: Date.now(),
+  }, null, 2) + "\n", "utf8");
   return preset;
+}
+
+function cleanupOrphanChannelPresets(cfgs) {
+  if (!fs.existsSync(PRESET_ROOT)) return;
+  const active = new Set(cfgs.map(channelPresetId).filter(Boolean));
+  const wechatCfgs = cfgs.filter((item) => item.mode === "wechat_pc" && channelPresetId(item));
+  for (const entry of fs.readdirSync(PRESET_ROOT, { withFileTypes: true })) {
+    if (!entry.isDirectory() || (!entry.name.startsWith("channel-") && !entry.name.startsWith("wechat-")) || active.has(entry.name)) continue;
+    const source = path.join(PRESET_ROOT, entry.name);
+    const definition = path.join(source, "agent.cordis.yml");
+    const marker = path.join(source, ".dsh-channel-im-managed.json");
+    let managed = fs.existsSync(marker);
+    if (!managed) {
+      try { managed = fs.readFileSync(definition, "utf8").includes("@deepseek-ai/dsh-channel-im/self-profile"); } catch {}
+    }
+    if (!managed) continue;
+
+    // 旧版固定微信通道的长期设定只在目标唯一且目标仍为空时迁移，避免跨机器人串设定。
+    if (entry.name === "channel-wechat-personal" && wechatCfgs.length === 1) {
+      const targetPreset = ensureChannelPreset(wechatCfgs[0]);
+      if (!targetPreset) continue;
+      const target = path.join(PRESET_ROOT, targetPreset);
+      const sourceProfile = path.join(source, "self-profile.md");
+      const targetProfile = path.join(target, "self-profile.md");
+      try {
+        const legacyProfile = fs.readFileSync(sourceProfile, "utf8");
+        const currentProfile = fs.readFileSync(targetProfile, "utf8");
+        if (legacyProfile.trim() && !currentProfile.trim()) {
+          fs.writeFileSync(targetProfile, legacyProfile, "utf8");
+          const sourcePermissions = path.join(source, "self-profile-permissions.json");
+          if (fs.existsSync(sourcePermissions)) fs.copyFileSync(sourcePermissions, path.join(target, "self-profile-permissions.json"));
+          log(`[通道预设] 已将旧微信长期设定迁移到 ${path.basename(target)}`);
+        }
+      } catch (error) { log(`[通道预设] 旧设定迁移失败: ${error?.message || error}`); }
+    }
+
+    fs.mkdirSync(PRESET_ARCHIVE_ROOT, { recursive: true });
+    const suffix = new Date().toISOString().replace(/[:.]/g, "-");
+    let archived = path.join(PRESET_ARCHIVE_ROOT, `${entry.name}-${suffix}`), sequence = 1;
+    while (fs.existsSync(archived)) archived = path.join(PRESET_ARCHIVE_ROOT, `${entry.name}-${suffix}-${sequence++}`);
+    try {
+      fs.renameSync(source, archived);
+      log(`[通道预设] 已归档孤儿预设 ${entry.name} -> ${archived}`);
+    } catch (error) { log(`[通道预设] 归档 ${entry.name} 失败: ${error?.message || error}`); }
+  }
 }
 function ensureWechatPresetConfig(cfg) {
   const preset = ensureChannelPreset(cfg);
+  if (!preset) return "";
   const configFile = cfg.configFile || DEFAULT_WECHAT_CONFIG;
   let custom = {};
   try { custom = JSON.parse(fs.readFileSync(configFile, "utf8")); } catch {}
@@ -169,6 +224,7 @@ async function ensureWorkspace(cfg) {
 }
 async function ensureSession(extKey, senderNick, cfg) {
   const expectedPreset = ensureChannelPreset(cfg);
+  if (!expectedPreset) throw new Error("微信账号尚未识别，无法创建账号专属 Agent 会话");
   const mapped = sessionMap[extKey];
   const existing = typeof mapped === "string" ? mapped : mapped?.sid;
   const existingPreset = typeof mapped === "object" ? mapped?.preset : undefined;
@@ -662,25 +718,36 @@ async function launchWeChatLoginWindow(cfg) {
 }
 
 async function bindWechatCandidate(cfg, baselineAccounts, baselineWindows) {
-  const [accounts, windows] = await Promise.all([probeWechat("accounts"), probeWechat("windows")]);
+  const [accounts, windows] = await Promise.all([probeWechat("accounts"), probeWechat("all_windows")]);
   const used = new Set(loadConfig().filter((item) => item.mode === "wechat_pc" && item.id !== cfg.id).map((item) => String(item.accountId || "")).filter(Boolean));
   const baseline = new Map(baselineAccounts.map((item) => [accountKey(item), accountActivity(item)]));
+  const expectedAccountId = String(cfg.expectedAccountId || "");
   const candidates = accounts.filter((item) => {
     const key = accountKey(item); if (!key || used.has(key)) return false;
-    return !baseline.has(key) || accountActivity(item) > Number(baseline.get(key) || 0);
+    return key === expectedAccountId || !baseline.has(key) || accountActivity(item) > Number(baseline.get(key) || 0);
   }).sort((a, b) => accountActivity(b) - accountActivity(a));
   const oldWindows = new Set(baselineWindows.map((item) => Number(item?.hwnd || 0)));
-  const newWindow = windows.find((item) => !oldWindows.has(Number(item?.hwnd || 0))) || null;
+  const newWindow = windows
+    .filter((item) => !oldWindows.has(Number(item?.hwnd || 0)))
+    .sort((a, b) => Number(b?.state === "main") - Number(a?.state === "main")
+      || Number(b?.visible) - Number(a?.visible)
+      || Number(b?.width || 0) * Number(b?.height || 0) - Number(a?.width || 0) * Number(a?.height || 0))[0] || null;
   if (newWindow) {
-    const launch = wechatLaunchState(cfg.id); launch.hwnd = Number(newWindow.hwnd || 0); launch.action = "waiting_for_scan";
-    updateWechatConfigEntry(cfg.id, { wechatHwnd: launch.hwnd, onboardingPhase: "waiting_for_scan", onboardingUpdatedAt: Date.now() });
+    const phase = newWindow.state === "main" ? "detecting_logged_in_account" : "waiting_for_login";
+    const launch = wechatLaunchState(cfg.id); launch.hwnd = Number(newWindow.hwnd || 0); launch.action = phase;
+    updateWechatConfigEntry(cfg.id, { wechatHwnd: launch.hwnd, onboardingPhase: phase, onboardingWindowState: newWindow.state || "unknown", onboardingUpdatedAt: Date.now() });
   }
+  // 账号数据库目录可能在登录小窗出现时就更新，不能据此判定已经登录。
+  // 只有微信主界面尺寸的窗口出现后，才允许绑定账号并启动通道。
+  if (!newWindow || newWindow.state !== "main") return null;
   if (!candidates.length) return null;
   const account = candidates[0], accountId = accountKey(account), hwnd = Number(newWindow?.hwnd || wechatLaunchState(cfg.id).hwnd || 0);
   const next = updateWechatConfigEntry(cfg.id, {
-    accountId, wechatHwnd: hwnd, enabled: true, onboardingPhase: "validating_channel", onboardingUpdatedAt: Date.now(),
+    accountId, expectedAccountId: "", onboardingBaselineAccounts: [], onboardingBaselineWindows: [],
+    wechatHwnd: hwnd, enabled: true, onboardingPhase: "validating_channel", onboardingUpdatedAt: Date.now(),
     name: String(account?.nickname || account?.remark || cfg.name || "微信机器人"),
   });
+  ensureChannelPreset(next);
   const hookEndpoint = await detectWechatHookEndpoint(hwnd);
   writeWechatRuntimeConfig(next, accountId, hwnd, hookEndpoint);
   log(`[微信机器人 ${next.id}] 发送顺序: ${hookEndpoint ? `Hook ${hookEndpoint} → UIA/OCR` : "UIA/OCR（未检测到属于该窗口的 Hook）"}`);
@@ -713,6 +780,22 @@ async function onboardingTick(id) {
     try { updateWechatConfigEntry(id, { onboardingPhase: "error", onboardingError: message, onboardingUpdatedAt: Date.now() }); } catch {}
     log(`[微信机器人 ${id}] 分步检查失败: ${message}`);
   } finally { state.running = false; writeStatus(); }
+}
+
+function startWechatOnboardingMonitor(cfg, baselineAccounts, baselineWindows) {
+  const old = wechatOnboarding.get(cfg.id); if (old?.timer) clearInterval(old.timer);
+  const onboarding = { baselineAccounts: baselineAccounts || [], baselineWindows: baselineWindows || [], running: false, timer: null };
+  onboarding.timer = setInterval(() => onboardingTick(cfg.id), 60000);
+  wechatOnboarding.set(cfg.id, onboarding);
+  setTimeout(() => onboardingTick(cfg.id), 2500);
+}
+function resumePendingWechatOnboarding() {
+  for (const cfg of loadConfig()) {
+    if (cfg.mode !== "wechat_pc" || !cfg.enabled || cfg.accountId || !cfg.servicePort) continue;
+    if (!["checking_environment", "building_configuration", "launching_new_wechat", "waiting_for_scan", "waiting_for_login", "detecting_logged_in_account", "error"].includes(String(cfg.onboardingPhase || ""))) continue;
+    startWechatOnboardingMonitor(cfg, Array.isArray(cfg.onboardingBaselineAccounts) ? cfg.onboardingBaselineAccounts : [], Array.isArray(cfg.onboardingBaselineWindows) ? cfg.onboardingBaselineWindows : []);
+    log(`[微信机器人 ${cfg.id}] 已恢复未完成的登录检测`);
+  }
 }
 
 function wechatManagementUrl(cfg) {
@@ -891,13 +974,15 @@ function getWechatConfigEntry(channelId = "") {
 }
 
 async function wechatBotStatus(cfg) {
+  // 状态查询同时承担账号预设自愈：用户手动删除后会按 wxid 自动重建。
+  ensureChannelPreset(cfg);
   const service = await readWechatServiceStatus(cfg);
   const state = wechatState.get(cfg.id), launch = wechatLaunchState(cfg.id);
   const serviceRunning = !!service?.running;
   const sendReady = Array.isArray(service?.send) && service.send.some((item) => item?.ok);
   const loggedIn = !!cfg.accountId && serviceRunning && !!service?.receive?.ok && sendReady;
   if (state) { state.connected = serviceRunning; state.loggedIn = loggedIn; }
-  const phase = loggedIn ? "connected" : String(cfg.onboardingPhase || (cfg.accountId ? "starting_bridge" : "waiting_for_scan"));
+  const phase = loggedIn ? "connected" : String(cfg.onboardingPhase || (cfg.accountId ? "starting_bridge" : "waiting_for_login"));
   return {
     channelId: cfg.id, name: cfg.name || "微信机器人", enabled: !!cfg.enabled, phase,
     servicePort: Number(cfg.servicePort || 0), serviceRunning, sendReady, loggedIn,
@@ -919,7 +1004,11 @@ async function setupWechatChannel(options = {}) {
   let cfgs = loadConfig();
   let cfg = requestedId ? cfgs.find((item) => item.id === requestedId && item.mode === "wechat_pc") : null;
   if (!requestedId) {
+    // “重新连接”优先复用最近停用的已绑定机器人，保留其会话、预设和规则。
     cfg = cfgs
+      .filter((item) => item.mode === "wechat_pc" && item.accountId && !item.enabled)
+      .sort((a, b) => Number(b.onboardingUpdatedAt || 0) - Number(a.onboardingUpdatedAt || 0))[0] || null;
+    if (!cfg) cfg = cfgs
       .filter((item) => item.mode === "wechat_pc" && !item.accountId && item.servicePort)
       .sort((a, b) => Number(b.onboardingUpdatedAt || 0) - Number(a.onboardingUpdatedAt || 0))[0] || null;
     if (cfg) {
@@ -937,22 +1026,25 @@ async function setupWechatChannel(options = {}) {
     cfgs.push(cfg); saveConfig(cfgs);
   } else {
     stopWechatChannel(cfg.id);
-    cfg = updateWechatConfigEntry(cfg.id, { accountId: "", wechatHwnd: 0, enabled: true, onboardingError: "" });
+    cfg = updateWechatConfigEntry(cfg.id, {
+      expectedAccountId: cfg.accountId || cfg.expectedAccountId || "",
+      accountId: "", wechatHwnd: 0, enabled: true, onboardingError: "",
+    });
   }
   const launch = wechatLaunchState(cfg.id); launch.action = "checking_environment"; launch.lastError = "";
   cfg = updateWechatConfigEntry(cfg.id, { onboardingPhase: "checking_environment", onboardingStartedAt: Date.now(), onboardingUpdatedAt: Date.now() });
   await ensureWechatPythonDependencies();
   cfg = updateWechatConfigEntry(cfg.id, { onboardingPhase: "building_configuration", onboardingUpdatedAt: Date.now() });
   ensureChannelPreset(cfg); writeWechatRuntimeConfig(cfg);
-  const [baselineAccounts, baselineWindows] = await Promise.all([probeWechat("accounts"), probeWechat("windows")]);
-  cfg = updateWechatConfigEntry(cfg.id, { onboardingPhase: "launching_new_wechat", onboardingUpdatedAt: Date.now() });
+  const [baselineAccounts, baselineWindows] = await Promise.all([probeWechat("accounts"), probeWechat("all_windows")]);
+  cfg = updateWechatConfigEntry(cfg.id, {
+    onboardingPhase: "launching_new_wechat", onboardingUpdatedAt: Date.now(),
+    onboardingBaselineAccounts: baselineAccounts.map((item) => ({ account: accountKey(item), last_activity: accountActivity(item) })),
+    onboardingBaselineWindows: baselineWindows.map((item) => ({ hwnd: Number(item?.hwnd || 0) })).filter((item) => item.hwnd),
+  });
   await launchWeChatLoginWindow(cfg);
-  cfg = updateWechatConfigEntry(cfg.id, { onboardingPhase: "waiting_for_scan", onboardingUpdatedAt: Date.now() });
-  const old = wechatOnboarding.get(cfg.id); if (old?.timer) clearInterval(old.timer);
-  const onboarding = { baselineAccounts, baselineWindows, running: false, timer: null };
-  onboarding.timer = setInterval(() => onboardingTick(cfg.id), 60000);
-  wechatOnboarding.set(cfg.id, onboarding);
-  setTimeout(() => onboardingTick(cfg.id), 2500);
+  cfg = updateWechatConfigEntry(cfg.id, { onboardingPhase: "waiting_for_login", onboardingUpdatedAt: Date.now() });
+  startWechatOnboardingMonitor(cfg, baselineAccounts, baselineWindows);
   syncChannels();
   return getWechatControlStatus(cfg.id);
 }
@@ -1004,6 +1096,7 @@ function writeStatus() {
 function syncChannels() {
   const cfgs = loadConfig();
   for (const cfg of cfgs) ensureChannelPreset(cfg);
+  cleanupOrphanChannelPresets(cfgs);
   const byId = new Map(cfgs.map((c) => [c.id, c]));
   for (const id of [...channels.keys()]) {
     const cfg = byId.get(id);
@@ -1030,6 +1123,7 @@ try {
   fs.watch(CONFIG_FILE, () => { clearTimeout(reloadTimer); reloadTimer = setTimeout(() => { log("[配置变更]"); syncChannels(); }, 800); });
 } catch (e) { log("[watch 配置失败]", e?.message ?? e); }
 syncChannels();
+resumePendingWechatOnboarding();
 
 // ---------- 管理 API（供 agent 直接增删，无需改文件） ----------
 const BRIDGE_PORT = Number(process.env.DSH_BRIDGE_PORT || 5175);
