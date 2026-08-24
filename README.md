@@ -2,14 +2,14 @@
 
 > 🤖 **给 Agent 的自动安装入口**：只把本仓库地址发给 Codex/Claude 并说“帮我安装插件”即可——它会读取本页、**AGENTS.md** 与 **INSTALL.md** 后自主完成安装与验证。
 
-**harness 本体之外的所有扩展，一个插件全包（v0.4.1）：**
+**harness 本体之外的所有扩展，一个插件全包（v0.5.2）：**
 
 | 模块 | 说明 |
 |---|---|
 | 桥接 `server.mjs` | 钉钉机器人(stream)/数字人(dws)/企微预留：随宿主启停、崩溃自重启、管理API 5175、热加载、看门狗、工作区自愈、防互聊/防自环 |
 | 扫码 `auth.mjs` | 钉钉数字人设备流登录，成功自动注册通道（120s 超时） |
 | Agent 通道管理工具 | `im_channel_manage`；普通 Harness 会话可搭建、启停、诊断、删除微信/钉钉通道，外部 IM 会话禁止调用 |
-| 「连接」页 | **原生 client 插件**（同包 dsh.client 面；微信个人号由 Harness 托管、检测与接管） |
+| 「连接」页 | **原生 client 插件**；只显示已连接机器人，多机器人分别配置 |
 | 「外部打开」 | 会话详情按钮（官方 npm 版经注入生效；原生槽位插件化在后续版本） |
 | 技能 ×2 | `im-channel-setup`（通道自助接入）+ `harness-docs`（说明书自动维护） |
 | 预设 | 「机器人助手」（无命令/无联网/数字员工人格） |
@@ -54,9 +54,19 @@ v0.4.0 将通道生命周期收口到 Harness Agent：连接页移除微信开�
 
 v0.4.1 对齐 Harness 官方工具插件的具名导出格式，确保全局通道管理工具的 `tools` 注入元数据被 Cordis 正确识别，修复安装 v0.4.0 后宿主启动失败的问题。
 
+v0.4.2 简化连接页：微信未连接时不显示状态卡和配置入口；连接后仅显示一张由“微信昵称、已连接、配置”组成的卡片，配置内容按需展开。
+
+v0.4.3 将微信进程拉起权限改为单次 Harness 运行期授权：宿主重启后只接管已经运行的微信，不会因为通道曾经启用就自动打开微信；只有普通 Harness 会话明确执行“搭建/开启微信通道”后，本次运行才允许拉起和自愈微信进程。
+
+v0.5.0 将微信接入改为完全隔离的多机器人流程。Harness 不再扫描后接管、清理或关闭用户已运行的微信；每次调用 `setup_wechat` 都会从环境、Python 依赖、独立目录与端口开始逐步构建，再单独拉起新登录实例。每个机器人有独立账号、窗口句柄、SQLite、媒体目录、工作区、Agent 预设和管理端口。构建期间通过原会话每 60 秒报告当前步骤，直到连接、失败或停止。
+
+v0.5.1 收紧微信窗口识别：仅接受 `Weixin.exe` / `WeChat.exe` 进程或精确微信窗口标题，避免把路径或标题含 `wechat` 的其他应用误绑为新机器人窗口。
+
+v0.5.2 将每分钟进度回报补齐为 Harness 原生 plugin notice 结构（含稳定消息 ID、来源和摘要），确保进度消息能在发起搭建的原会话中稳定唤醒 Agent 并直接汇报。
+
 在普通 Harness 会话中说“帮我搭建微信通道”，Agent 会调用工具完成本机检查、依赖补齐和启动。实现细节见 [`wechat_channel/README.md`](wechat_channel/README.md)，真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
-微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。可在微信配置的 `runtime` 中设置 `{ "wechatStartupMode": "attach" }` 只接管现有进程。`GET /api/wechat/status` 可只读查询；启停、增删通道的写接口必须携带 Harness 宿主令牌，只能通过 `im_channel_manage` 使用。
+微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。`GET /api/wechat/status` 可按 `channelId` 只读查询；搭建和停止接口必须携带 Harness 宿主令牌，只能通过 `im_channel_manage` 使用。Harness 重启时只恢复已绑定的桥接服务，不操作微信客户端进程。
 
 ## 官方功能对齐（overrides）
 

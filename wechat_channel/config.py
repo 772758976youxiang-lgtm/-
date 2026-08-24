@@ -94,7 +94,8 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
 
     if config["service"]["host"] not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("service.host must be loopback")
-    _require_loopback_url("send.hook_endpoint", str(config["send"]["hook_endpoint"]))
+    if str(config["send"].get("hook_endpoint") or "").strip():
+        _require_loopback_url("send.hook_endpoint", str(config["send"]["hook_endpoint"]))
     if config["agent"]["adapter"] == "dsh":
         _require_loopback_url("agent.endpoint", str(config["agent"]["endpoint"]))
     if int(config["send"]["max_retries"]) < 0:

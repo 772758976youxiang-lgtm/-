@@ -24,9 +24,12 @@ def build_service(config: Dict[str, Any]) -> WeChatChannelService:
         int(config["channel"]["message_limit_per_conversation"]),
     )
     send_settings = config["send"]
-    drivers = [HookSendDriver(str(send_settings["hook_endpoint"]), float(send_settings["timeout_seconds"]))]
+    drivers = []
+    hook_endpoint = str(send_settings.get("hook_endpoint") or "").strip()
+    if hook_endpoint:
+        drivers.append(HookSendDriver(hook_endpoint, float(send_settings["timeout_seconds"])))
     if send_settings.get("fallbacks"):
-        drivers.append(UiaOcrSendDriver(receive.display_name, verify=True))
+        drivers.append(UiaOcrSendDriver(receive.display_name, verify=True, hwnd=config.get("runtime", {}).get("wechatHwnd")))
     router = SendRouter(drivers, int(send_settings["max_retries"]))
     agent = make_agent_adapter(config, store)
     return WeChatChannelService(config, store, receive, router, agent)
@@ -78,4 +81,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

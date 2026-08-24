@@ -306,10 +306,12 @@ class UiaOcrSendDriver(SendDriver):
     name = "wechatauto_uia_ocr"
 
     def __init__(self, target_resolver: Optional[Callable[[str], str]] = None,
-                 gui_factory: Optional[Callable[[], Any]] = None, verify: bool = True):
+                 gui_factory: Optional[Callable[[], Any]] = None, verify: bool = True,
+                 hwnd: Optional[int] = None):
         self.target_resolver = target_resolver or (lambda value: value)
         self.gui_factory = gui_factory
         self.verify = verify
+        self.hwnd = int(hwnd) if hwnd else None
         self._gui = None
         self._lock = threading.RLock()
 
@@ -318,8 +320,9 @@ class UiaOcrSendDriver(SendDriver):
             factory = self.gui_factory
             if factory is None:
                 from wechatauto.guia import WeChatGUI
-                factory = WeChatGUI
-            self._gui = factory()
+                self._gui = WeChatGUI(hwnd=self.hwnd)
+            else:
+                self._gui = factory()
         return self._gui
 
     def health(self) -> DriverHealth:

@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 from wechat_channel.agents import DshAgentAdapter, EchoAgentAdapter
 from wechat_channel.config import DEFAULT_CONFIG, load_config
-from wechat_channel.drivers import HookSendDriver, SendDriver, SendRouter, WeChatDbReceiveDriver, parse_group_content
+from wechat_channel.drivers import HookSendDriver, SendDriver, SendRouter, UiaOcrSendDriver, WeChatDbReceiveDriver, parse_group_content
 from wechat_channel.http_api import ManagementServer
 from wechat_channel.media import image_part_from_media
 from wechat_channel.models import AgentReply, DriverHealth, RawMessage, SendResult, SendTask, StandardMessage
@@ -231,6 +231,15 @@ class WeChatChannelTests(unittest.TestCase):
         path.write_text('{"send":{"hook_endpoint":"http://192.168.1.2:30001"}}', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "loopback"):
             load_config(str(path))
+
+    def test_configuration_allows_hook_to_be_disabled_for_isolated_bots(self):
+        path = Path(self.temp.name) / "isolated.json"
+        path.write_text('{"send":{"hook_endpoint":""},"runtime":{"wechatHwnd":12345}}', encoding="utf-8")
+        config = load_config(str(path))
+        self.assertEqual(config["send"]["hook_endpoint"], "")
+        self.assertEqual(config["runtime"]["wechatHwnd"], 12345)
+        driver = UiaOcrSendDriver(lambda _target: "target", hwnd=12345)
+        self.assertEqual(driver.hwnd, 12345)
 
     def test_management_api_status_and_echo(self):
         db = FakeDb()
