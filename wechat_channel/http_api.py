@@ -125,8 +125,14 @@ class ManagementServer:
                 try:
                     body = self._body()
                     if parsed.path == "/api/send":
+                        mention_ids = body.get("mention_ids") or []
+                        mention_names = body.get("mention_names") or []
+                        if not isinstance(mention_ids, list) or not isinstance(mention_names, list):
+                            raise ValueError("mention_ids and mention_names must be arrays")
                         key = owner.service.enqueue_send(str(body.get("target_id") or ""), str(body.get("text") or ""),
-                                                         str(body.get("source_message_id") or "manual"))
+                                                         str(body.get("source_message_id") or "manual"),
+                                                         [str(value) for value in mention_ids],
+                                                         [str(value) for value in mention_names])
                         return self._json(202, {"ok": True, "idempotency_key": key})
                     if parsed.path == "/api/echo":
                         enabled = owner.service.set_echo(bool(body.get("enabled", True)))

@@ -282,14 +282,22 @@ class HookSendDriver(SendDriver):
     def send(self, task: SendTask) -> SendResult:
         target = "filehelper" if task.target_id in ("self", "filehelper") else task.target_id
         try:
+            mentions = [str(value).strip() for value in task.mention_ids if str(value).strip()]
+            text = task.text
+            if mentions:
+                names = [str(value).replace("\r", " ").replace("\n", " ").strip() for value in task.mention_names]
+                prefixes = ["@%s " % (names[index] if index < len(names) and names[index] else mention)
+                            for index, mention in enumerate(mentions)]
+                text = "".join(prefixes) + text
             response = _json_request(
-                self.endpoint + "/SendTextMsg",
-                {"wxidorgid": target, "msg": task.text},
+                self.endpoint + ("/SendAtText" if mentions else "/SendTextMsg"),
+                {"wxidorgid": target, "msg": text, "wxids": mentions} if mentions else {"wxidorgid": target, "msg": text},
                 self.timeout,
             )
             ok = response.get("ret") in (0, "0")
             return SendResult(ok, self.name, target, task.idempotency_key,
-                              None if ok else str(response.get("retmsg") or response), details={"response": response})
+                              None if ok else str(response.get("retmsg") or response),
+                              details={"response": response, "mention_ids": mentions})
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
             return SendResult(False, self.name, target, task.idempotency_key, str(exc), details={"error_type": type(exc).__name__})
 
@@ -358,6 +366,11 @@ class SendRouter:
         errors = []
         for round_number in range(self.max_retries + 1):
             for driver in self.drivers:
+                # Native mention metadata cannot be recreated by UIA/OCR.  Do
+                # not open or focus WeChat and silently downgrade a real @ to
+                # plain text when the local Hook endpoint is unavailable.
+                if task.mention_ids and driver.name != "aixed_hook":
+                    continue
                 attempts += 1
                 result = driver.send(task)
                 if result.ok:
@@ -366,7 +379,8 @@ class SendRouter:
                 errors.append({"driver": driver.name, "error": result.error})
             if round_number < self.max_retries:
                 time.sleep(self.retry_delay * (round_number + 1))
-        return SendResult(False, self.drivers[-1].name, task.target_id, task.idempotency_key,
+        driver = "aixed_hook" if task.mention_ids else self.drivers[-1].name
+        return SendResult(False, driver, task.target_id, task.idempotency_key,
                           "; ".join(str(item["error"]) for item in errors if item["error"]) or "all send drivers failed",
                           attempts=attempts, details={"errors": errors})
 

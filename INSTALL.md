@@ -51,7 +51,8 @@ DSH_CHANNEL_IM_TARGET_ROOTS=/path/to/deepseek-harness/node_modules/@deepseek-ai 
 | 8 | **私人仓库访问** | 安装报“could not read from remote” | 确认 SSH key 已加入 GitHub；`ssh -T git@github.com` 验证 |
 | 9 | **微信通道位置** | 群聊通道在 Mac/Linux 上不存在 | 微信 Hook/UIA/OCR 只能在 **Windows**（小号+4.1.10.27+version.dll）；正式服务位于 `wechat_channel/`，旧 `examples/windows-gateway/gateway.py` 仅供演示兼容 |
 | 9a | **正式微信通道依赖** | `mode=wechat_pc` 启动后立即退出 | Windows 执行 `python -m pip install -r wechat_channel/requirements.txt`；再运行 `python -m wechat_channel diagnose --config wechat_channel/config.example.json` |
-| 9b | **微信发送降级** | Hook 可发但 UIA/OCR 不可用 | 打开并登录微信主聊天窗口、保持桌面解锁；正式发送依次走 Hook、UIA/OCR，全部失败才记为失败 |
+| 9b | **微信发送降级** | Hook 可发但 UIA/OCR 不可用 | 打开并登录微信主聊天窗口、保持桌面解锁；普通文本依次走 Hook、UIA/OCR，全部失败才记为失败 |
+| 9c | **群聊真实 @** | 日志显示 `SendAtText` 404 | 为 `4.1.10.27` Hook 应用 `wechat_channel/hook/aixed-4.1.10.27-send-at-text.patch` 并重新构建/替换 `version.dll`；群 @ 不允许降级到 UIA/OCR |
 | 10 | **凭证安全** | 勿把 `~/.dsh-im-channels.json`、`.credentials.yaml`、`~/.dsh/settings.yaml` 提交/公开 | 仓库/插件零凭证；泄露则尽快去相应平台重置 |
 | 11 | **卸载残留** | 移除插件后旧配置仍在 | `dsh plugin --profile web uninstall/remove <pkg>`；再按需删 `~/.dsh-im-channels.json`、技能、预设、`~/.dsh-channel-im` |
 | 12 | **中文分支显示** | GitHub 显示默认分支为“掌握” | 那是 master 的中文翻译，别删别重建 |

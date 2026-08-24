@@ -64,6 +64,8 @@ class SendTask:
     source_message_id: str
     idempotency_key: str
     retry_count: int = 0
+    mention_ids: List[str] = field(default_factory=list)
+    mention_names: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

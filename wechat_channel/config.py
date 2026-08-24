@@ -28,6 +28,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "hook_endpoint": "http://127.0.0.1:30001",
         "hook_wechat_version": "4.1.10.27",
         "hook_repository": "https://github.com/aixed/WeChat-Hook",
+        "group_reply_mention_sender": True,
         "fallbacks": ["wechatauto_uia", "wechatauto_ocr"],
         "fallback_repository": "https://github.com/fanyuantaier/wechatauto-replica",
         "timeout_seconds": 15,

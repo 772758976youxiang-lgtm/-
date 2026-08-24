@@ -138,7 +138,8 @@ class WeChatChannelService:
         self._started_at = int(time.time() * 1000)
         for item in self.store.pending_send_tasks():
             self._send_queue.put(SendTask(item["target_id"], item["text"], item["source_message_id"],
-                                          item["idempotency_key"], int(item.get("attempts") or 0)))
+                                          item["idempotency_key"], int(item.get("attempts") or 0),
+                                          list(item.get("mention_ids") or []), list(item.get("mention_names") or [])))
         self._send_thread = threading.Thread(target=self._send_loop, name="wechat-send", daemon=True)
         self._poll_thread = threading.Thread(target=self._poll_loop, name="wechat-receive", daemon=True)
         self._agent_ready_thread = threading.Thread(target=self._agent_ready_loop, name="wechat-agent-ready", daemon=True)
@@ -285,7 +286,13 @@ class WeChatChannelService:
             raise RuntimeError(reply.error or "agent response failed: " + reply.status)
         if not reply.text.strip():
             raise RuntimeError("agent returned an empty reply")
-        task = SendTask(message.conversation_id, reply.text, message.message_id, message.message_id + ":reply")
+        mention_ids: List[str] = []
+        mention_names: List[str] = []
+        if message.conversation_type == "group" and bool(self.config["send"].get("group_reply_mention_sender", True)):
+            mention_ids = [message.sender_id]
+            mention_names = [str(metadata.get("sender_name") or message.sender_id)]
+        task = SendTask(message.conversation_id, reply.text, message.message_id, message.message_id + ":reply",
+                        mention_ids=mention_ids, mention_names=mention_names)
         if self.store.create_send_task(task.to_dict()):
             self._send_queue.put(task)
         self._record_processed(message.message_id, message.conversation_id, record)
@@ -315,11 +322,13 @@ class WeChatChannelService:
             self.log("info" if result.ok else "error", "send",
                      "message sent" if result.ok else "message send failed", result.to_dict())
 
-    def enqueue_send(self, target_id: str, text: str, source_message_id: str = "manual") -> str:
+    def enqueue_send(self, target_id: str, text: str, source_message_id: str = "manual",
+                     mention_ids: Optional[List[str]] = None, mention_names: Optional[List[str]] = None) -> str:
         if not target_id or not text.strip():
             raise ValueError("target_id and text are required")
         key = "%s:%s" % (source_message_id, uuid.uuid4().hex)
-        task = SendTask(target_id, text, source_message_id, key)
+        task = SendTask(target_id, text, source_message_id, key,
+                        mention_ids=list(mention_ids or []), mention_names=list(mention_names or []))
         if not self.store.create_send_task(task.to_dict()):
             raise RuntimeError("duplicate send task")
         self._send_queue.put(task)

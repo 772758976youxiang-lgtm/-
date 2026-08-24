@@ -39,6 +39,8 @@ v0.3.16 为普通图片增加非 UIA 的后台密钥探测：不拉起或抢占�
 
 v0.3.17 在连接规则面板增加唯一“预设写入权限人”。只有该联系人的私聊 Session 能通过工具层强制校验并更新通道长期设定，群聊、其他联系人和普通 Harness 会话均无权写入。机器人每轮先判断是否存在可靠、可复用且值得长期保留的新内容；写入时同时生成整体摘要，并将新旧内容合并、去重、纠错、删除过时内容后整体优化，不再局限于身份或人设。
 
+v0.3.18 为微信群机器人增加原生群成员 @：群回复默认真实 @ 原消息发送者，使用扩展的本机 Hook `SendAtText` 接口直接写入微信消息 `atlist`，不打开或聚焦微信窗口。若 Hook 未加载该接口，@ 任务会停止并报告失败，不会偷偷降级为 UIA/OCR 或普通文本。
+
 微信通道先执行 `python -m pip install -r wechat_channel/requirements.txt`，再阅读 [`wechat_channel/README.md`](wechat_channel/README.md)。真实 Hook、UIA/OCR 和数据库链路测试结果见 [`wechat_channel/TEST_REPORT.md`](wechat_channel/TEST_REPORT.md)。
 
 微信默认从 `C:\Program Files\Tencent\Weixin\Weixin.exe` 等常见目录自动定位；自定义安装位置可在 bundle 配置中设置 `wechatExecutable`，或设置环境变量 `DSH_WECHAT_EXECUTABLE`。控制接口为 `GET /api/wechat/status` 与 `POST /api/wechat/toggle`。

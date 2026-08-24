@@ -10,7 +10,7 @@
 - `sender_id=2` 自发消息过滤；
 - `wechat:<account_id>:<conversation_id>` 固定会话键；
 - DSH、通用 HTTP、进程和 Echo 四种 AgentAdapter；
-- 单一串行发送队列，Hook → UIA/OCR，超时、有限重试和幂等发送；
+- 单一串行发送队列，Hook → UIA/OCR，超时、有限重试和幂等发送；群聊自动真实 @ 原消息发送者时仅走本地 Hook，绝不降级到 UIA/OCR；
 - 连续读取失败自动重建数据库驱动；
 - 回环管理 API、可选 Token、联系人/群白名单、限频和紧急停用；
 - SSE `message`、`status`、`send`、`log`、`recent` 事件。
@@ -32,6 +32,23 @@ python -m wechat_channel diagnose --config wechat_channel/config.example.json
 - Python 3.9+
 
 Hook 的公开实现默认监听 `0.0.0.0:30001`。应通过 Windows 防火墙只允许本机访问；本服务拒绝配置非回环 Hook 地址。
+
+### 群聊 @
+
+默认 `send.group_reply_mention_sender=true`：机器人对群成员消息作出回复时，会在回复前真实 @ 该成员。该能力通过本机 Hook 的 `POST /SendAtText` 调用微信进程内的消息 `atlist`，不打开、不聚焦微信窗口；微信只需在后台保持已登录。
+
+官方 `aixed/WeChat-Hook` 的 4.1.10.27 发布 DLL 尚未公开该路由。插件随附可复现补丁 [`hook/aixed-4.1.10.27-send-at-text.patch`](hook/aixed-4.1.10.27-send-at-text.patch)：构建并替换 `version.dll` 后即可启用。Hook 不可用时，含 @ 的任务会明确失败而不会退化成普通文本或 UIA 操作。
+
+手动发送时也可提供多个目标：
+
+```json
+{
+  "target_id": "123@chatroom",
+  "text": "请查看消息",
+  "mention_ids": ["wxid_member"],
+  "mention_names": ["成员备注"]
+}
+```
 
 ## 启动
 
@@ -113,4 +130,4 @@ npm test
 python -m unittest discover -s tests -p "test_wechat_channel*.py"
 ```
 
-测试覆盖首次基线、增量消息、自发消息过滤、会话与任务持久化、发送降级、回环地址限制和管理 API。
+测试覆盖首次基线、增量消息、自发消息过滤、会话与任务持久化、原生群 @（包括禁止 UIA 降级）、发送降级、回环地址限制和管理 API。

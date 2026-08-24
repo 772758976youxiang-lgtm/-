@@ -67,6 +67,11 @@ class StateStore:
                 );
                 """
             )
+            columns = {str(row["name"]) for row in self._db.execute("PRAGMA table_info(send_tasks)")}
+            if "mention_ids_json" not in columns:
+                self._db.execute("ALTER TABLE send_tasks ADD COLUMN mention_ids_json TEXT NOT NULL DEFAULT '[]'")
+            if "mention_names_json" not in columns:
+                self._db.execute("ALTER TABLE send_tasks ADD COLUMN mention_names_json TEXT NOT NULL DEFAULT '[]'")
 
     @staticmethod
     def _now() -> int:
@@ -159,9 +164,11 @@ class StateStore:
         now = self._now()
         with self._lock, self._db:
             cursor = self._db.execute(
-                "INSERT OR IGNORE INTO send_tasks(idempotency_key,source_message_id,target_id,text,status,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?)",
-                (task["idempotency_key"], task["source_message_id"], task["target_id"], task["text"], "queued", now, now),
+                "INSERT OR IGNORE INTO send_tasks(idempotency_key,source_message_id,target_id,text,mention_ids_json,mention_names_json,status,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (task["idempotency_key"], task["source_message_id"], task["target_id"], task["text"],
+                 json.dumps(task.get("mention_ids") or [], ensure_ascii=False),
+                 json.dumps(task.get("mention_names") or [], ensure_ascii=False), "queued", now, now),
             )
         return cursor.rowcount == 1
 
@@ -175,9 +182,19 @@ class StateStore:
     def pending_send_tasks(self) -> List[Dict[str, Any]]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT idempotency_key,source_message_id,target_id,text,attempts FROM send_tasks WHERE status='queued' ORDER BY created_at ASC"
+                "SELECT idempotency_key,source_message_id,target_id,text,attempts,mention_ids_json,mention_names_json FROM send_tasks WHERE status='queued' ORDER BY created_at ASC"
             ).fetchall()
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            item = dict(row)
+            for column, key in (("mention_ids_json", "mention_ids"), ("mention_names_json", "mention_names")):
+                try:
+                    value = json.loads(item.pop(column) or "[]")
+                    item[key] = [str(entry) for entry in value] if isinstance(value, list) else []
+                except (TypeError, json.JSONDecodeError):
+                    item[key] = []
+            result.append(item)
+        return result
 
     def add_log(self, level: str, event: str, message: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         item = {"level": level, "event": event, "message": message, "data": data or {}, "created_at": self._now()}

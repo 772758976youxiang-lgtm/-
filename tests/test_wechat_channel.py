@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 from wechat_channel.agents import DshAgentAdapter, EchoAgentAdapter
 from wechat_channel.config import DEFAULT_CONFIG, load_config
-from wechat_channel.drivers import SendDriver, SendRouter, WeChatDbReceiveDriver, parse_group_content
+from wechat_channel.drivers import HookSendDriver, SendDriver, SendRouter, WeChatDbReceiveDriver, parse_group_content
 from wechat_channel.http_api import ManagementServer
 from wechat_channel.media import image_part_from_media
 from wechat_channel.models import AgentReply, DriverHealth, RawMessage, SendResult, SendTask, StandardMessage
@@ -172,14 +172,57 @@ class WeChatChannelTests(unittest.TestCase):
         self.assertEqual(hook.calls, 1)
         self.assertEqual(gui.calls, 1)
 
+    def test_group_reply_mentions_original_sender_through_native_hook(self):
+        db = FakeDb()
+        receive = WeChatDbReceiveDriver(self.store, db_factory=lambda **_: db)
+        service = WeChatChannelService(copy.deepcopy(DEFAULT_CONFIG), self.store, receive,
+                                       SendRouter([FakeSendDriver("aixed_hook", [True])], 0), EchoAgentAdapter())
+        service._handle_raw(RawMessage("account", "group@chatroom", "42", 1, "text", "member:\nhello", 1, 42))
+        task = service._send_queue.get_nowait()
+        self.assertEqual(task.mention_ids, ["member"])
+        self.assertEqual(task.mention_names, ["member"])
+
+    def test_mention_task_never_falls_back_to_uia(self):
+        hook = FakeSendDriver("aixed_hook", [False])
+        gui = FakeSendDriver("wechatauto_uia_ocr", [True])
+        result = SendRouter([hook, gui], max_retries=0, retry_delay=0).send(
+            SendTask("group@chatroom", "hello", "m1", "m1:reply", mention_ids=["member"])
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(hook.calls, 1)
+        self.assertEqual(gui.calls, 0)
+
+    def test_hook_driver_posts_group_mention_endpoint_with_visible_prefix(self):
+        requests = []
+
+        def fake_request(url, payload, timeout, method="POST"):
+            requests.append((url, payload, timeout, method))
+            return {"ret": 0}
+
+        import wechat_channel.drivers as drivers
+        original = drivers._json_request
+        drivers._json_request = fake_request
+        try:
+            result = HookSendDriver("http://127.0.0.1:30001").send(
+                SendTask("group@chatroom", "你好", "m1", "m1:reply", mention_ids=["wxid_member"], mention_names=["张三"])
+            )
+        finally:
+            drivers._json_request = original
+        self.assertTrue(result.ok)
+        self.assertEqual(requests[0][0], "http://127.0.0.1:30001/SendAtText")
+        self.assertEqual(requests[0][1], {"wxidorgid": "group@chatroom", "msg": "@张三 你好", "wxids": ["wxid_member"]})
+
     def test_session_and_send_tasks_persist(self):
         self.store.set_session("wechat:a:c", "session-1", {"a": 1})
         self.assertEqual(self.store.get_session("wechat:a:c"), "session-1")
         self.assertEqual(self.store.get_session_metadata("wechat:a:c"), {"a": 1})
-        task = SendTask("friend", "hello", "m1", "m1:reply")
+        task = SendTask("friend", "hello", "m1", "m1:reply", mention_ids=["wxid_member"], mention_names=["张三"])
         self.assertTrue(self.store.create_send_task(task.to_dict()))
         self.assertFalse(self.store.create_send_task(task.to_dict()))
-        self.assertEqual(len(self.store.pending_send_tasks()), 1)
+        pending = self.store.pending_send_tasks()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["mention_ids"], ["wxid_member"])
+        self.assertEqual(pending[0]["mention_names"], ["张三"])
         self.store.finish_send_task(task.idempotency_key, True, "hook", 1, None)
         self.assertEqual(self.store.pending_send_tasks(), [])
 
