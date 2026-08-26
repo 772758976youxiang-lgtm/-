@@ -11,7 +11,7 @@
 | 「连接」页 | **原生 client 插件**（同包 dsh.client 面，注册 settings.section；经 5175 读状态，任何构建形态都生效） |
 | 「外部打开」 | 会话详情按钮（官方 npm 版经注入生效；原生槽位插件化在后续版本） |
 | 技能 ×2 | `im-channel-setup`（通道自助接入）+ `harness-docs`（说明书自动维护） |
-| 预设 | 「机器人助手」（无命令/无联网/数字员工人格） |
+| 预设 | **默认=「前台接待（仅求助）」qiuzhu**（唯一工具=session_send，需求转发给匹配的人）；另附「机器人助手」（无命令/无联网） |
 | Windows 网关 | `examples/windows-gateway/gateway.py` + 接入说明/修复指令（微信通道生产件） |
 
 ## 安装（新机器一行）

@@ -12,7 +12,7 @@ import path from "node:path";
 const CONFIG_FILE = process.env.DSH_CHANNELS_FILE || path.join(os.homedir(), ".dsh-im-channels.json");
 const HOST = process.env.DSH_HOST || "http://127.0.0.1:3080";
 const CWD = process.env.DSH_CWD || path.join(os.homedir(), "DeepSeek");
-const AGENT_PRESET = process.env.DSH_AGENT_PRESET || "robot-assistant";
+const AGENT_PRESET = process.env.DSH_AGENT_PRESET || "qiuzhu";
 const MAP_FILE = process.env.DSH_MAP_FILE || path.join(os.homedir(), ".dsh-im-bridge-map.json");
 const STATUS_FILE = process.env.DSH_STATUS_FILE || path.join(os.homedir(), ".dsh-im-channels-status.json");
 const DWS_BIN = process.env.DWS_BIN || path.join(os.homedir(), ".local", "bin", "dws");
@@ -87,6 +87,21 @@ async function ensureWorkspace(cfg) {
   wsCache.set(cfg.id, wsId);
   log(`[工作区] ${cfg.id} -> ${wsId} (标题: ${cfg.name})`);
   return wsId;
+}
+// 工作时间：仅在 workHours.start ~ workHours.end（HH:MM）内处理；未配置=不限
+function inWorkHours(cfg, now = new Date()) {
+  const wh = cfg.workHours;
+  if (!wh) return true;
+  const [sh, sm] = String(wh.start ?? "00:00").split(":").map(Number);
+  const [eh, em] = String(wh.end ?? "24:00").split(":").map(Number);
+  const cur = now.getHours() * 60 + now.getMinutes();
+  return cur >= (sh * 60 + (sm || 0)) && cur < (eh * 60 + (em || 0));
+}
+// 允许名单：只允许指定发送人（id 或名字）命令；未配置=不限制
+function isAllowed(cfg, id, name) {
+  const a = cfg.allowed;
+  if (!Array.isArray(a) || a.length === 0) return true;
+  return a.includes(id) || a.includes(name);
 }
 async function ensureSession(extKey, senderNick, cfg) {
   const existing = sessionMap[extKey];
@@ -231,6 +246,9 @@ function makeHandler(cfg, client) {
     const extKey = data?.conversationId ?? data?.msgId;
     if (!extKey || !msgId) return;
     const sender = data?.senderNick ?? "?";
+    const senderId = data?.senderStaffId ?? "";
+    if (!isAllowed(cfg, senderId, sender)) { log(`[${cfg.id} 允许名单跳过] ${sender}`); return; }
+    if (!inWorkHours(cfg)) { log(`[${cfg.id} 非工作时间跳过] ${sender}`); return; }
     if (msgState.get(msgId) === "done" || inflight.has(msgId)) { log(`[重投·跳过] msgId=${msgId}`); return; }
     inflight.add(msgId);
     emotionCall(appKey, appSecret, "reply", msgId, data?.conversationId, "2659900", "🤔思考中");
@@ -317,6 +335,8 @@ function handleDwsEvent(cfg, ev) {
   // 忽略名单：跳过指定发送人（防止与其它机器人/自动化互聊死循环）
   const ignore = Array.isArray(cfg.ignoreSenders) ? cfg.ignoreSenders : [];
   if (ignore.includes(ev.sender) || ignore.includes(ev.sender_open_dingtalk_id)) { log(`[dws 忽略发送人] ${ev.sender}`); return; }
+  if (!isAllowed(cfg, ev.sender_open_dingtalk_id, ev.sender)) { log(`[dws 允许名单跳过] ${ev.sender}`); return; }
+  if (!inWorkHours(cfg)) { log(`[dws 非工作时间跳过] ${ev.sender}`); return; }
   if (msgState.get(msgId) === "done" || inflight.has(msgId)) { log(`[dws 重投跳过] ${msgId}`); return; }
   inflight.add(msgId);
   const sender = ev.sender || "?";

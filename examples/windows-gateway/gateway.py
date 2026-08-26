@@ -19,7 +19,9 @@ DEFAULTS = {
     "hook_host": "http://127.0.0.1:30001",   # WeChat-Hook 本机服务
     "mac_url": "http://192.168.1.100:8789",  # Mac 演示台/harness 地址（改你的局域网 IP）
     "poll_interval": 2.0,
-    "room_policy": "at",                      # at/all/off
+    "room_policy": "at",
+    "owner": "",           # 只允许该发送人命令（绑定 大号 wxid/昵称；留空=不限）
+    "workHours": "",        # 工作时间段 "08:00-24:00"；留空=不限                      # at/all/off
     "cursor_ms": 0,                           # 已处理的最大消息时间戳(ms)
     "debug_discover": True,                   # 首跑：列出库/表/样例，用于固定 SCHEMA
     "SCHEMA": {                                # 首次联调后固定（字段名以实际库为准）
@@ -96,6 +98,17 @@ def send_text(target, content):
     except Exception as e:
         print(f"[{now_s()}] 发送失败: {e}")
 
+def in_work():
+    wh = CFG["workHours"]
+    if not wh: return True
+    try:
+        st, en = wh.split("-")
+        sh, sm = map(int, st.split(":")); eh, em = map(int, en.split(":"))
+        c = time.localtime(); cur = c.tm_hour*60 + c.tm_min
+        return cur >= sh*60+sm and cur < eh*60+em
+    except Exception:
+        return True
+
 def poll_once(self_wxid):
     S = CFG["SCHEMA"]
     if not S.get("db") or not S.get("table"):
@@ -123,6 +136,8 @@ def poll_once(self_wxid):
         if d.get(S["self_field"]) in (1, "1", True):
             continue
         sender = d.get(S["sender_field"], "")
+        if not in_work(): continue
+        if CFG["owner"] and sender not in (CFG["owner"],): continue
         content = d.get(S["content_field"], "") or ""
         is_group = bool(S.get("is_group_marker")) and bool(d.get(S["is_group_marker"]))
         if not content or sender in (self_wxid, ""):
