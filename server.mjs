@@ -466,6 +466,31 @@ const httpServer = http.createServer((req, res) => {
     log(`[管理API] 删除通道 ${id}`);
     return send(200, { ok: true, id });
   }
+  // 主动发送：机器人/数字人 给指定用户发消息（供任何 agent/脚本调用）
+  if (req.method === "POST" && path === "/api/send") {
+    let body = ""; req.on("data", (d) => body += d); req.on("end", async () => {
+      try {
+        const { channelId, userId, openDingtalkId, text } = JSON.parse(body || "{}");
+        if (!channelId || !text) return send(400, { ok: false, error: "需要 channelId + text（+ userId/openDingtalkId）" });
+        const cfg = loadConfig().find((c) => c.id === channelId);
+        if (!cfg) return send(400, { ok: false, error: "通道不存在: " + channelId });
+        let args;
+        if (cfg.mode === "dws") {
+          const target = openDingtalkId || userId;
+          if (!target) return send(400, { ok: false, error: "dws 通道需要 openDingtalkId 或 userId" });
+          args = ["chat", "+messages-send", "--as", "user", openDingtalkId ? "--open-dingtalk-id" : "--user", target, "--text", text, "--yes", ...(cfg.profile ? ["--profile", cfg.profile] : [])];
+        } else {
+          if (!userId) return send(400, { ok: false, error: "机器人通道需要 userId（如 040640486858880459）" });
+          args = ["chat", "+messages-send", "--as", "bot", "--robot-code", cfg.appKey, "--users", userId, "--text", text, "--yes"];
+        }
+        log(`[主动发送] ${channelId} -> ${userId || openDingtalkId}: ${String(text).slice(0, 40)}`);
+        const r = await dwsRun(args);
+        const ok = r.code === 0;
+        send(200, { ok, stdout: String(r.stdout || "").slice(0, 260), stderr: String(r.stderr || "").slice(0, 120) });
+      } catch (e) { send(400, { ok: false, error: e?.message ?? String(e) }); }
+    });
+    return;
+  }
   send(404, { ok: false, error: "not found" });
 });
 httpServer.listen(BRIDGE_PORT, () => log(`[管理API] http://127.0.0.1:${BRIDGE_PORT}/api/channels (GET/POST/DELETE)`));

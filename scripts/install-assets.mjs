@@ -15,7 +15,7 @@ const log = (message) => console.log(`  ${message}`);
 const allowPartial = process.env.DSH_CHANNEL_IM_ALLOW_PARTIAL_INSTALL === "1";
 
 try {
-  for (const [srcName, dstName] of [["im-channel-setup.md", "im-channel-setup.md"], ["harness-docs-update.md", "harness-docs.md"]]) {
+  for (const [srcName, dstName] of [["im-channel-setup.md", "im-channel-setup.md"], ["harness-docs-update.md", "harness-docs.md"], ["im-send.md", "im-send.md"]]) {
     const source = path.join(PKG, "skills", srcName);
     if (!fs.existsSync(source)) throw new Error(`缺少技能文件：${source}`);
     for (const directory of [path.join(DSH, "skills"), path.join(HOME, ".agents", "skills")]) {
